@@ -1,0 +1,443 @@
+/* Reset and Base Styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background: linear-gradient(to right, #e6f4ea, #f2fcf5);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: #2e4d2f;
+    line-height: 1.6;
+    min-height: 100vh;
+    padding: 20px;
+}
+
+/* Typography */
+/* Typography */
+h1, h2, h3 {
+    color: #08500e;
+    text-align: center;
+    margin: 20px 0;
+    position: relative; /* To allow for the pseudo-element positioning */
+    text-shadow: 1px 1px 2px #a2d5ac;
+}
+
+/* Adding background fade shade to headers */
+h1::before, h2::before, h3::before {
+    content: ''; 
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(to bottom, rgba(171, 247, 175, 0.3), rgba(163, 223, 166, 0.3)); /* Softer fade effect */
+    z-index: -1; /* Ensure the gradient is behind the text */
+    border-radius: 5px; /* Optional: add border-radius for rounded corners */
+}
+
+/* Optional: Apply a subtle shadow for extra refinement */
+h1, h2, h3 {
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1); /* Subtle shadow to give depth */
+}
+
+p {
+    font-size: 1.1rem;
+    color: #3d3d3d;
+    padding: 5px;
+}
+
+/* Links */
+a {
+    text-decoration: none;
+    color: #2a7b3f;
+    font-weight: bold;
+}
+
+a:hover {
+    color: #0f3b1c;
+}
+
+/* Buttons */
+button {
+    background-color: #3fa34d;
+    color: white;
+    padding: 10px 20px;
+    margin-top: 10px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: all 0.3s ease;
+}
+
+button:hover {
+    background-color: #2e7031;
+}
+
+button:active {
+    transform: scale(0.98);
+    background-color: #1e5631;
+}
+
+/* Forms */
+form {
+    background-color: #ffffff;
+    padding: 20px;
+    border-radius: 10px;
+    max-width: 500px;
+    margin: 0 auto 30px auto;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+form label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 600;
+}
+
+form input, form select {
+    width: 100%;
+    padding: 8px;
+    margin-bottom: 15px;
+    border-radius: 5px;
+    border: 1px solid #c1e1c1;
+}
+form input:focus, form select:focus {
+    border-color: #3fa34d;
+    outline: none;
+    box-shadow: 0 0 5px rgba(63, 163, 77, 0.5);
+    background-color: #f6fff7;
+}
+
+.form-container {
+    background-color: #ffffff;
+    padding: 20px;
+    border-radius: 10px;
+    max-width: 500px;
+    margin: 0 auto;
+    text-align: center;
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.1);
+}
+
+
+.form-container input, .form-container button {
+    padding: 10px;
+    margin-top: 10px;
+    width: 80%;
+    border-radius: 6px;
+    border: 1px solid #b4e1b4;
+}
+
+.form-container button {
+    background-color: #3fa34d;
+    color: white;
+    font-weight: bold;
+}
+
+.form-container button:hover {
+    background-color: #2e7031;
+}
+.expertProfile {
+    background-color: #ffffff;
+    border-radius: 10px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.1);
+    padding: 20px;
+    margin: 15px;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.expertProfile:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 15px rgba(63, 163, 77, 0.2);
+}
+
+.weather-container {
+    background-color: #ffffff;
+    padding: 20px;
+    border-radius: 10px;
+    max-width: 500px;
+    margin: 30px auto;
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.1);
+    text-align: center;
+}
+
+.weather-container h2 {
+    color: #1e5631;
+}
+
+.weather-container div {
+    margin-top: 10px;
+    font-weight: 500;
+    color: #2e4d2f;
+}
+
+.recommendation-container {
+    display: none;
+    background-color: #ffffff;
+    padding: 20px;
+    border-radius: 10px;
+    max-width: 500px;
+    margin: 30px auto;
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.1);
+}
+
+.recommendation-container ul {
+    padding-left: 20px;
+    list-style-type: circle;
+    color: #2e4d2f;
+}
+
+
+/* Navigation */
+nav {
+    background-color: #d6f5d6;
+    padding: 15px;
+    text-align: center;
+    margin-bottom: 30px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+nav a {
+    margin: 0 15px;
+    color: #2a7b3f;
+    font-weight: bold;
+}
+
+nav a:hover {
+    color: #1e5631;
+}
+
+/* Sections and Containers */
+section, .form-container, .weather-container, .recommendation-container {
+    background-color: #ffffff;
+    padding: 20px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.1);
+}
+
+.recommendation-container {
+    display: none;
+}
+
+/* Chatbox */
+.chatbox-container {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 300px;
+    background-color: #e1f5e1;
+    border: 1px solid #b4e1b4;
+    border-radius: 10px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+    display: flex;
+    flex-direction: column;
+}
+
+.chatbox-header {
+    background-color: #3fa34d;
+    color: white;
+    padding: 10px;
+    border-radius: 10px 10px 0 0;
+    text-align: center;
+    font-weight: bold;
+}
+
+.chatbox-body {
+    height: 200px;
+    overflow-y: auto;
+    padding: 10px;
+    background-color: #fff;
+}
+
+.chatbox-body p {
+    margin: 5px 0;
+    padding: 6px 10px;
+    border-radius: 8px;
+}
+
+.user-msg {
+    text-align: right;
+    background-color: #b4e1b4;
+    color: #0f3b1c;
+}
+
+.bot-msg {
+    text-align: left;
+    background-color: #f0f0f0;
+    color: #333;
+}
+
+.chatbox-footer {
+    padding: 10px;
+    display: flex;
+    gap: 10px;
+}
+
+.chatbox-footer input[type="text"] {
+    flex: 1;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+}
+
+.chatbox-footer button {
+    padding: 8px 16px;
+}
+
+/* Upload Box */
+.upload-container {
+    text-align: center;
+    margin-top: 30px;
+}
+
+.upload-btn {
+    background-color: #2a7b3f;
+    color: white;
+    padding: 10px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+}
+
+.upload-btn:hover {
+    background-color: #1e5631;
+}
+
+/* Process Table */
+.process-table {
+    width: 90%;
+    margin: 20px auto;
+    border-collapse: collapse;
+    box-shadow: 0 0 10px #c1e1c1;
+    display: none;
+}
+
+.process-table th, .process-table td {
+    border: 1px solid #cceccc;
+    padding: 10px;
+    text-align: left;
+}
+
+.process-table th {
+    background-color: #b4e1b4;
+}
+
+.process-table tr:hover {
+    background-color: #f2fcf5;
+}
+.market-section {
+    text-align: center;
+    background-color: #ffffff;
+    padding: 30px;
+    border-radius: 10px;
+    max-width: 700px;
+    margin: 30px auto;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+.market-section p {
+    margin-bottom: 15px;
+    font-size: 1.2rem;
+    color: #2e4d2f;
+}
+
+.note {
+    font-style: italic;
+    font-weight: 600;
+    color: #3fa34d;
+}
+
+.market-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    margin-top: 20px;
+}
+
+
+/* Footer */
+.foot {
+    text-align: center;
+    margin-top: auto;
+    padding: 15px;
+    font-size: 1.1rem;
+    background-color: #e6f4ea;
+    color: #2e4d2f;
+    font-style: italic;
+    font-weight: bold;
+}
+@media screen and (max-width: 600px) {
+    h1 {
+        font-size: 1.8rem;
+    }
+
+    p, label, button {
+        font-size: 1rem;
+    }
+
+    .form-container input, .form-container button {
+        width: 100%;
+    }
+
+    .chatbox-container {
+        width: 90%;
+        right: 5%;
+    }
+}
+@media screen and (max-width: 768px) {
+    .weather-container, .recommendation-container, .process-table {
+        width: 90%;
+        margin: 20px auto;
+    }
+    
+        .market-section {
+            width: 90%;
+        }
+    }
+
+
+    .market-section {
+        width: 90%;
+    }
+    .market-buttons {
+        flex-direction: column;
+        gap: 10px;
+    }
+    button.loading::after {
+        content: '...';
+        animation: dots 1s steps(5, end) infinite;
+    }
+    
+    @keyframes dots {
+        0%, 20% {
+            content: '.';
+        }
+        40% {
+            content: '..';
+        }
+        60% {
+            content: '...';
+        }
+        80%, 100% {
+            content: '';
+        }
+    }
+    .loading {
+        background-color: #3fa34d;
+        color: white;
+        padding: 10px 20px;
+        margin-top: 10px;
+        border: none;
+        border-radius: 6px;
+        cursor: not-allowed;
+        font-size: 1rem;
+        transition: all 0.3s ease;
+    }
+    html {
+        scroll-behavior: smooth;
+    }
+    
+    

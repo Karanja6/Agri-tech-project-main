@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="stylesheet" href="stylesheet.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Information</title>
+</head>
+<body>
+    <header>
+        <h1>Recommendation</h1>
+    </header>
+    <nav>
+        <a href="home.html">Home</a>
+        <a href="about us.html">About</a>
+        <a href="Evaluation.html">Farming Evaluation</a>
+<a href="Diseaseandpestmanagement.html">Disease and pest management </a>
+        <a href="advice.html">Advice</a>
+        <a href="market.html">Market</a>
+    </nav>
+    <section>
+        <div class="form-container">
+            <label for="location">Enter Location:</label>
+            <input type="text" id="location" placeholder="Enter city name">
+            <button id="fetchWeatherBtn">Get Weather</button>
+            <p id="weather-info">Please enter a location above to get weather information.</p>
+        </div>
+        <div class="weather-container">
+            <h2>Current Weather</h2>
+            <div id="temperature"></div>
+            <div id="wind"></div>
+            <div id="clouds"></div>
+            <div id="pressure"></div>
+        </div>
+        <div class="recommendation-container" id="recommendationContainer">
+            <h2>Recommended Crops</h2>
+            <ul id="cropList" class="crop-list">
+                <!-- Recommended crops will be added here -->
+            </ul>
+        </div>
+    </section>
+    <div class="foot">
+        <p>Making agriculture a source of livelihood</p>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
