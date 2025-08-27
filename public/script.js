@@ -1,5 +1,9 @@
 // public/script.js
 document.addEventListener('DOMContentLoaded', () => {
+    const API_BASE = process.env.NODE_ENV === 'production' 
+    ? 'https://your-backend-service.onrender.com'
+    : 'http://localhost:3000';
+
   // ================================
   // AUTH: Login
   // ================================
@@ -11,7 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const password = document.getElementById('password').value;
 
       try {
-        const response = await fetch('http://localhost:3000/api/login', {
+       const response = await fetch(`${API_BASE}/api/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ farmers_id: farmersId, password })
@@ -52,7 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       try {
-        const response = await fetch('http://localhost:3000/api/register', {
+        const response = await fetch(`${API_BASE}/api/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -256,7 +260,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const process_date = formData.get('process_date');
 
       try {
-        const response = await fetch('http://localhost:3000/api/Evaluation', {
+       const response = await fetch(`${API_BASE}/api/Evaluation', {
+            /register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ farmers_id, crop, process_type, process_date })
@@ -284,8 +289,7 @@ document.addEventListener('DOMContentLoaded', () => {
       event.preventDefault();
       const formData = new FormData(feedbackForm);
       const status = formData.get('status');
-
-      const response = await fetch('http://localhost:3000/api/feedback', {
+        const response = await fetch(`${API_BASE}/api/feedback`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status })
@@ -331,30 +335,21 @@ document.addEventListener('DOMContentLoaded', () => {
       farmersProcesses[farmerId].push({ crop, processType, processDate });
     });
   }
+const showProcessBtn = document.getElementById('showProcessBtn');
+if (showProcessBtn) {
+  showProcessBtn.addEventListener('click', function () {
+    const farmerId = document.getElementById('farmers_id').value.trim();
+    if (!farmerId) {
+      alert('Please enter a valid Farmer ID.');
+      return;
+    }
+    // optional: show local-in-memory rows added in this session
+    displayCompletedProcesses(farmerId);
 
-  const showProcessBtn = document.getElementById('showProcessBtn');
-  if (showProcessBtn) {
-    showProcessBtn.addEventListener('click', function() {
-      const farmerId = document.getElementById('farmers_id').value;
-      if (!farmerId) {
-        alert("Please enter a valid Farmer ID.");
-        return;
-      }
-      displayCompletedProcesses(farmerId);
-
-      fetch(`/api/Evaluation?farmers_id=${encodeURIComponent(farmerId)}`)
-        .then(response => response.json())
-        .then(data => {
-          if (data.exists) displayProcesses(farmerId);
-          else alert("No processes found for the given Farmer ID.");
-        })
-        .catch(error => {
-          console.error('Error fetching processes:', error);
-          alert("An error occurred while fetching the data.");
-        });
-    });
-  }
-
+    // always fetch the real data from the backend
+    displayProcesses(farmerId); // this already calls /api/get-processes
+  });
+}
   function displayProcesses(farmerId) {
     fetch(`/api/get-processes?farmers_id=${encodeURIComponent(farmerId)}`)
       .then(response => response.json())
@@ -476,4 +471,110 @@ document.addEventListener('DOMContentLoaded', () => {
       expertProfiles.style.display = (expertProfiles.style.display === 'none') ? 'block' : 'none';
     });
   }
+
+const evalCityFetchBtn = document.getElementById('evalCityFetchBtn');
+if (evalCityFetchBtn) {
+  evalCityFetchBtn.addEventListener('click', async () => {
+    const city = document.getElementById('eval_city')?.value?.trim();
+    if (!city) return alert('Enter a town/city first.');
+    try {
+      const apiKey = 'e303728999f9d4a7a5ced20c22f4b71e';
+      const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)}&appid=${apiKey}&units=metric`;
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('Weather lookup failed');
+      const w = await r.json();
+      const t = w?.main?.temp, h = w?.main?.humidity;
+
+      // fill + highlight
+      const tEl = document.getElementById('temperature');
+      const hEl = document.getElementById('humidity');
+      if (tEl) { tEl.value = (t ?? ''); tEl.classList.add('just-filled'); setTimeout(()=>tEl.classList.remove('just-filled'), 800); }
+      if (hEl) { hEl.value = (h ?? ''); hEl.classList.add('just-filled'); setTimeout(()=>hEl.classList.remove('just-filled'), 800); }
+    } catch (e) {
+      console.error(e);
+      alert('Could not fetch weather for that town.');
+    }
+  });
+}
+
+// ---------- Evaluation: call process-eval ----------
+const evalBtn = document.getElementById('evalBtn');
+if (evalBtn) {
+  evalBtn.addEventListener('click', async () => {
+    const crop = document.getElementById('crop').value.trim().toLowerCase();
+    const process_type = document.getElementById('process_type').value;
+
+    // map UI -> model stage labels
+    const stageMap = {
+      land_prep: 'preplant',
+      planting: 'planting',
+      irrigation: 'vegetative',
+      weed_control: 'vegetative',
+      pest_management: 'vegetative',
+      fertilization: 'vegetative',
+      harvest: 'harvest',
+      soil_management: 'preplant'
+    };
+    const stage = stageMap[process_type] || 'vegetative';
+
+    const N  = parseFloat(document.getElementById('N').value);
+    const P  = parseFloat(document.getElementById('P').value);
+    const K  = parseFloat(document.getElementById('K').value);
+    const ph = parseFloat(document.getElementById('ph').value);
+
+    // allow manual override, else read the inputs you filled via weather call
+    const temperature = parseFloat(document.getElementById('temperature').value);
+    const humidity    = parseFloat(document.getElementById('humidity').value);
+    const rainfall    = parseFloat(document.getElementById('rainfall').value);
+
+    // simple sanity
+    const nums = [N,P,K,temperature,humidity,ph,rainfall];
+    if (nums.some(v => Number.isNaN(v))) {
+      return alert('Please fill all numeric fields (N,P,K,temperature,humidity,ph,rainfall).');
+    }
+
+    try {
+      const resp = await fetch('/api/process-eval', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ crop, stage, N, P, K, temperature, humidity, ph, rainfall })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data?.message || 'Process evaluation failed');
+
+      // render
+      const card = document.getElementById('evalResultCard');
+      const msg  = document.getElementById('processMlResult');
+      const warn = document.getElementById('processWarnings');
+      if (card) card.style.display = 'block';
+
+      const status = (data.prediction === 'suitable') ? '✅ Suitable' : '⚠️ Not suitable';
+      const pct = Math.round((data.suitability_score || 0) * 100);
+      if (msg) msg.textContent = `${status} (score: ${pct}%)`;
+
+      // build warnings from flags
+      if (warn) {
+        warn.innerHTML = '';
+        const flags = data.flags || {};
+        const bad = Object.entries(flags).filter(([,v]) => v !== 'ok');
+        if (!bad.length) {
+          warn.style.display = 'none';
+        } else {
+          warn.style.display = 'block';
+          bad.forEach(([k,v]) => {
+            const li = document.createElement('li');
+            li.textContent = `${k}: ${v}`;
+            li.className = (v === 'ok') ? 'status-ok' : 'status-high'; // both high/low in red class per CSS
+            warn.appendChild(li);
+          });
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      alert(e.message || 'Could not evaluate process.');
+    }
+  });
+}
 });
+
+
