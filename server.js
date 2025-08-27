@@ -265,16 +265,15 @@ app.post('/api/process-eval', async (req, res) => {
   });
 });
 app.post('/api/feedback', async (req, res) => {
-  const farmers_id = req.session.farmers_id;
-  console.log('Farmers ID from session:', farmers_id);
-
-  const status = req.body.status === 'true';
-  console.log('Feedback status:', status);
-
   try {
-    const newFeedback = await Feedback.create({ farmers_id, status });
-    console.log('New feedback created:', newFeedback);
-    res.status(201).json({ message: 'Feedback submitted successfully', feedbackId: newFeedback.id });
+    const sessionFarmer = req.session?.farmers_id;
+    const { farmers_id: bodyFarmer, status } = req.body || {};
+    const farmers_id = bodyFarmer || sessionFarmer;
+    if (!farmers_id) return res.status(400).json({ message: 'farmers_id is required for USSD/Non-session calls' });
+
+    const statusBool = (String(status).toLowerCase() === 'true');
+    const newFeedback = await Feedback.create({ farmers_id, status: statusBool });
+    return res.status(201).json({ message: 'Feedback submitted successfully', feedbackId: newFeedback.id });
   } catch (error) {
     console.error('Error inserting feedback:', error);
     res.status(500).json({ message: 'Error saving feedback' });
@@ -496,41 +495,35 @@ app.all('/ussd', async (req, res) => {
     }
 
     // 3) Weather + ML → 3*CITY*N*P*K*pH*RAINFALL
-    if (first === '3') {
-      const prompts = [
-        'Enter City/Town for weather:',
-        'Enter Nitrogen (N):',
-        'Enter Phosphorus (P):',
-        'Enter Potassium (K):',
-        'Enter soil pH:',
-        'Enter Rainfall (mm):'
-      ];
-      if (parts.length <= 6) return ussdReply(res, 'CON', prompts[parts.length - 1]);
-      const [_, city, N, P, K, ph, rainfall] = parts;
+  // 3) Weather + ML → 3*CITY*TEMP*HUMID*N*P*K*pH*RAINFALL
+if (first === '3') {
+  const prompts = [
+    'Enter City/Town:',
+    'Enter Temperature (°C):',
+    'Enter Humidity (%):',
+    'Enter Nitrogen (N):',
+    'Enter Phosphorus (P):',
+    'Enter Potassium (K):',
+    'Enter soil pH:',
+    'Enter Rainfall (mm):'
+  ];
+  if (parts.length <= 8) return ussdReply(res, 'CON', prompts[parts.length - 1]);
 
-      let temperature, humidity;
-      if (process.env.OPENWEATHER_API_KEY) {
-        try {
-          const ow = await axios.get('https://api.openweathermap.org/data/2.5/weather', {
-            params: { q: city, appid: process.env.OPENWEATHER_API_KEY, units: 'metric' }
-          });
-          temperature = ow?.data?.main?.temp;
-          humidity    = ow?.data?.main?.humidity;
-        } catch {}
-      }
+  const [_, city, temperature, humidity, N, P, K, ph, rainfall] = parts;
 
-      try {
-        const ml = await apiPost('/api/ml-recommend', {
-          N:+N, P:+P, K:+K, ph:+ph, rainfall:+rainfall, temperature, humidity
-        });
-        const list = Array.isArray(ml.alternatives) && ml.alternatives.length
-          ? `\nAlternatives: ${ml.alternatives.slice(0,5).join(', ')}`
-          : '';
-        return ussdReply(res, 'END', `${ml.message || 'Recommendation ready.'}${list}`);
-      } catch (e) {
-        return ussdReply(res, 'END', `Could not get recommendation: ${e.message}`);
-      }
-    }
+  try {
+    const ml = await apiPost('/api/ml-recommend', {
+      N:+N, P:+P, K:+K, ph:+ph, rainfall:+rainfall,
+      temperature:+temperature, humidity:+humidity
+    });
+    const list = Array.isArray(ml.alternatives) && ml.alternatives.length
+      ? `\nAlternatives: ${ml.alternatives.slice(0,5).join(', ')}`
+      : '';
+    return ussdReply(res, 'END', `${ml.message || 'Recommendation ready.'}${list}`);
+  } catch (e) {
+    return ussdReply(res, 'END', `Could not get recommendation: ${e.message}`);
+  }
+}
 
     // 4) Record Crop Process -> 4*FARMER_ID*CROP*PROCESS_TYPE*DATE
     if (first === '4') {
@@ -580,15 +573,20 @@ app.all('/ussd', async (req, res) => {
     }
 
     // 7) Feedback -> 7*your feedback
-    if (first === '7') {
-      if (parts.length === 1) return ussdReply(res, 'CON', 'Share your feedback (short):');
-      try {
-        const r = await apiPost('/api/feedback', { status: 'true' });
-        return ussdReply(res, 'END', r.message || 'Thanks for your feedback.');
-      } catch (e) {
-        return ussdReply(res, 'END', `Could not save feedback: ${e.message}`);
-      }
-    }
+  // 7) Feedback -> 7*FARMER_ID*your feedback
+if (first === '7') {
+  if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
+  if (parts.length === 2) return ussdReply(res, 'CON', 'Share your feedback (short):');
+  const farmers_id = parts[1];
+  const statusText = parts.slice(2).join(' ');
+  try {
+    const r = await apiPost('/api/feedback', { farmers_id, status: 'true' });
+    return ussdReply(res, 'END', r.message || 'Thanks for your feedback.');
+  } catch (e) {
+    return ussdReply(res, 'END', `Could not save feedback: ${e.message}`);
+  }
+}
+
 
     // 8) Expert Profiles (static)
     if (first === '8') {
