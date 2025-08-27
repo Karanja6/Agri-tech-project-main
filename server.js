@@ -125,8 +125,19 @@ async function initializeDatabase() {
 initializeDatabase();
 // ---- Routes ----
 app.get('/', (req, res) => {
-  res.redirect('/home');
+  if (req.session.farmers_id) {
+    return res.redirect('/home');
+  }
+  res.sendFile(path.join(__dirname, 'public', 'index.html')); // your login page
 });
+
+app.get('/home', (req, res) => {
+  if (!req.session.farmers_id) {
+    return res.redirect('/');
+  }
+  res.sendFile(path.join(__dirname, 'public', 'home.html'));
+});
+
 app.post('/api/register', async (req, res) => {
   const { farmers_id, fullName, contact, land_size, soil_type, password, confirmPassword } = req.body;
   if (password !== confirmPassword) {
@@ -206,13 +217,6 @@ app.post('/api/process-eval', async (req, res) => {
       return res.status(500).json({ message: 'Bad ML output', raw: out });
     }
   });
-});
-
-app.get('/', (req, res) => {
-  if (req.session.farmers_id) {
-    return res.redirect('/home');
-  }
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 app.post('/api/feedback', async (req, res) => {
   const farmers_id = req.session.farmers_id;
