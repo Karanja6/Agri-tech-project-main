@@ -1,24 +1,28 @@
 // server.js
-const express = require('express');
-const bcrypt = require('bcryptjs');
-const Sequelize = require('sequelize');
-const { DataTypes } = require('sequelize');
-const cors = require('cors');
-const session = require('express-session');
 require('dotenv').config();
 
-const path = require('path');
-const axios = require('axios');
+const express  = require('express');
+const bcrypt   = require('bcryptjs');
+const Sequelize = require('sequelize');
+const { DataTypes } = require('sequelize');
+const cors     = require('cors');
+const session  = require('express-session');
+const path     = require('path');                 // <-- moved before use
+const multer   = require('multer');
+const upload   = multer({ dest: path.join(__dirname, 'uploads') }); // <-- now safe
+const axios    = require('axios');
 const { spawn } = require('child_process');
 
 const PORT = process.env.PORT || 3000;
-const app = express();
+const app  = express();
 
 /* =========================
    USSD + API helper config
    ========================= */
-const rawBase = process.env.API_BASE || `http://localhost:${PORT}`;
+const rawBase  = process.env.API_BASE || `http://localhost:${PORT}`;
 const API_BASE = rawBase.endsWith('/') ? rawBase.slice(0, -1) : rawBase;
+
+app.set('trust proxy', 1); // allow secure cookies when behind a proxy (Render/NGINX/etc.)
 
 // JSON for normal APIs
 app.use(express.json());
@@ -26,8 +30,18 @@ app.use(express.json());
 // x-www-form-urlencoded ONLY for the USSD route (most gateways post like this)
 app.use('/ussd', express.urlencoded({ extended: false }));
 
-// CORS (relax as needed)
-app.use(cors({ origin: '*', credentials: true }));
+// ------------ CORS ------------
+// If you don't need cross-site cookies, you can just use origin:'*' & credentials:false.
+// If you DO need cookies from a separate frontend domain, list it here and set credentials:true.
+app.use(cors({
+  origin: [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    // add your deployed frontend origin here, e.g.:
+    // 'https://your-frontend-domain.com'
+  ],
+  credentials: true
+}));
 
 // Static files (optional site)
 app.use(express.static(path.join(__dirname, 'public')));
@@ -37,7 +51,10 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'randomsetofcharacters',
   resave: false,
   saveUninitialized: true,
-  cookie: { secure: false } // set true behind HTTPS + proxy
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',         // true on HTTPS
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
+  }
 }));
 
 function ussdReply(res, type, message) {
@@ -92,20 +109,20 @@ function fmtDate(d) {
   }
 }
 
-/* =============
+/* ================
    Database init
-   ============= */
+   ================ */
 let sequelizeWithDB;
 let User, CropProcess, Feedback;
 
 function defineModels(sequelize) {
   const User = sequelize.define('User', {
     farmers_id: { type: DataTypes.INTEGER, primaryKey: true, allowNull: false, unique: true },
-    fullname:   { type: DataTypes.STRING, allowNull: false },
-    contact:    { type: DataTypes.STRING, allowNull: false }, // allow leading zeros/+
-    land_size:  { type: DataTypes.FLOAT,  allowNull: false },
-    soil_type:  { type: DataTypes.STRING, allowNull: false },
-    password:   { type: DataTypes.STRING, allowNull: false },
+    fullname:   { type: DataTypes.STRING,  allowNull: false },
+    contact:    { type: DataTypes.STRING,  allowNull: false }, // keep as string for leading zeros/+
+    land_size:  { type: DataTypes.FLOAT,   allowNull: false },
+    soil_type:  { type: DataTypes.STRING,  allowNull: false },
+    password:   { type: DataTypes.STRING,  allowNull: false },
   }, { timestamps: true });
 
   const CropProcess = sequelize.define('CropProcess', {
@@ -125,7 +142,7 @@ function defineModels(sequelize) {
     rainfall:    { type: DataTypes.FLOAT, allowNull: true },
 
     // ML outputs
-    stage:             { type: DataTypes.STRING, allowNull: true },
+    stage:             { type: DataTypes.STRING,  allowNull: true },
     suitable:          { type: DataTypes.BOOLEAN, allowNull: true },
     suitability_score: { type: DataTypes.FLOAT,   allowNull: true },
     flags:             { type: DataTypes.JSON,    allowNull: true },
@@ -146,17 +163,6 @@ function defineModels(sequelize) {
 
   return { User, CropProcess, Feedback };
 }
-
-const stageMap = {
-  land_prep: "land_prep",
-  planting: "planting",
-  irrigation: "irrigation",
-  weed_control: "weed_control",
-  pest_management: "pest_management",
-  fertilization: "fertilization",
-  harvest: "harvest",
-  soil_management: "soil_management"
-};
 
 async function initializeDatabase() {
   try {
@@ -254,9 +260,9 @@ app.post('/api/process-eval', async (req, res) => {
     return res.status(400).json({ message: 'Missing fields. Require: crop, stage, N,P,K,temperature,humidity,ph,rainfall' });
   }
 
-  const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
+  const pyCmd  = process.platform === 'win32' ? 'python' : 'python3';
   const pyPath = path.join(__dirname, 'ml', 'process_predict.py');
-  const args = [String(crop), String(stage), ...[N, P, K, temperature, humidity, ph, rainfall].map(String)];
+  const args   = [String(crop), String(stage), ...[N, P, K, temperature, humidity, ph, rainfall].map(String)];
 
   const py = spawn(pyCmd, [pyPath, ...args], { cwd: path.join(__dirname, 'ml') });
 
@@ -354,6 +360,26 @@ Format: {"disease": "...", "remedies": ["..."]}`;
   }
 });
 
+// GET /api/weather?city=Nairobi
+app.get('/api/weather', async (req, res) => {
+  const city = (req.query.city || '').trim();
+  if (!city) return res.status(400).json({ message: 'city is required' });
+
+  try {
+    const url = 'https://api.openweathermap.org/data/2.5/weather';
+    const { data } = await axios.get(url, {
+      params: { q: city, appid: process.env.OPENWEATHER_KEY, units: 'metric' }
+    });
+
+    // Return only what the frontend needs
+    return res.json({ main: data.main, wind: data.wind, clouds: data.clouds });
+  } catch (e) {
+    const status  = e?.response?.status || 500;
+    const message = e?.response?.data?.message || 'weather fetch failed';
+    return res.status(status).json({ message });
+  }
+});
+
 // === ML recommend endpoint ===
 app.post('/api/ml-recommend', async (req, res) => {
   const { N, P, K, temperature, humidity, ph, rainfall } = req.body || {};
@@ -362,9 +388,9 @@ app.post('/api/ml-recommend', async (req, res) => {
     return res.status(400).json({ message: 'All numeric fields required: N,P,K,temperature,humidity,ph,rainfall' });
   }
 
-  const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
+  const pyCmd  = process.platform === 'win32' ? 'python' : 'python3';
   const pyPath = path.join(__dirname, 'ml', 'predict.py');
-  const args = nums.map(String);
+  const args   = nums.map(String);
 
   const py = spawn(pyCmd, [pyPath, ...args], { cwd: path.join(__dirname, 'ml') });
 
@@ -391,6 +417,52 @@ app.post('/api/Evaluation', async (req, res) => {
   } catch (e) {
     console.error('Evaluation save error:', e);
     return res.status(500).json({ message: 'Error saving process' });
+  }
+});
+
+/* =========================
+   Image upload (disease detection)
+   ========================= */
+// POST /api/upload-image  (multipart/form-data; field name: cropImage)
+app.post('/api/upload-image', upload.single('cropImage'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'No image uploaded (field: cropImage)' });
+
+    const imgPath = req.file.path;
+
+    // --- QUICK placeholder so the UI works immediately ---
+    // return res.json({
+    //   disease: 'Leaf Blight (placeholder)',
+    //   remedies: [
+    //     'Remove affected leaves',
+    //     'Improve ventilation',
+    //     'Apply copper-based fungicide as directed'
+    //   ]
+    // });
+
+    // --- OPTIONAL: Call your Python model instead ---
+    const pyCmd  = process.platform === 'win32' ? 'python' : 'python3';
+    const pyPath = path.join(__dirname, 'ml', 'detect_disease.py'); // implement this script
+    const py     = spawn(pyCmd, [pyPath, imgPath], { cwd: path.join(__dirname, 'ml') });
+
+    let out = '', err = '';
+    py.stdout.on('data', d => out += d.toString());
+    py.stderr.on('data', d => err += d.toString());
+    py.on('close', code => {
+      if (code !== 0) return res.status(500).json({ message: 'Image ML error', error: err || out });
+      try {
+        const parsed = JSON.parse(out.trim()); // expect {"disease":"..","remedies":["..",".."]}
+        if (!parsed?.disease || !Array.isArray(parsed?.remedies)) {
+          return res.status(500).json({ message: 'Bad ML output shape', raw: parsed });
+        }
+        return res.json(parsed);
+      } catch {
+        return res.status(500).json({ message: 'Non-JSON ML output', raw: out });
+      }
+    });
+  } catch (e) {
+    console.error('upload-image error:', e);
+    return res.status(500).json({ message: 'Upload failed' });
   }
 });
 
