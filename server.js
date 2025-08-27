@@ -13,6 +13,52 @@ const path = require('path');
 const multer = require('multer');
 const axios = require('axios');
 const { spawn } = require('child_process');
+// === USSD helpers ===
+const API_BASE = process.env.API_BASE || `http://localhost:${PORT}`; // calls this same server by default
+
+function ussdReply(res, type, message) {
+  // type: 'CON' to continue, 'END' to terminate
+  res.set('Content-Type', 'text/plain');
+  return res.send(`${type} ${message}`);
+}
+
+async function apiPost(path, payload) {
+  const url = `${API_BASE}${path}`;
+  try {
+    const { data } = await axios.post(url, payload);
+    return data;
+  } catch (e) {
+    const msg = e?.response?.data?.message || e.message || 'Server error';
+    throw new Error(msg);
+  }
+}
+
+async function apiGet(path, params) {
+  const url = `${API_BASE}${path}`;
+  try {
+    const { data } = await axios.get(url, { params });
+    return data;
+  } catch (e) {
+    const msg = e?.response?.data?.message || e.message || 'Server error';
+    throw new Error(msg);
+  }
+}
+
+function rootUssdMenu() {
+  return [
+    'Welcome to SmartFarm',
+    '1. Login',
+    '2. Register',
+    '3. Weather → ML Crop Advice',
+    '4. Record Crop Process',
+    '5. View My Processes',
+    '6. Quick Disease Advice',
+    '7. Feedback',
+    '8. Expert Profiles',
+    '9. Process Suitability Check',
+  ].join('\n');
+}
+// === End USSD helpers ===
 
 // static files
 app.use(express.static(path.join(__dirname, 'public')));
@@ -391,6 +437,238 @@ app.post('/api/process-eval-save', async (req, res) => {
     res.status(500).json({ message: 'Server error', error: e.message });
   }
 });
+// === USSD endpoint (Africa's Talking-style) ===
+app.post('/ussd', async (req, res) => {
+  const { sessionId, phoneNumber, serviceCode, text } = req.body; // provider posts these
+  const parts = (text || '').split('*').filter(Boolean);
+  const first = parts[0];
+
+  if (!parts.length) return ussdReply(res, 'CON', rootUssdMenu());
+
+  try {
+    // 1) Login -> 1*FARMER_ID*PASSWORD
+    if (first === '1') {
+      if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
+      if (parts.length === 2) return ussdReply(res, 'CON', 'Enter Password:');
+      const farmers_id = parts[1];
+      const password = parts[2];
+      try {
+        await apiPost('/api/login', { farmers_id, password });
+        return ussdReply(res, 'END', 'Login successful.');
+      } catch (e) {
+        return ussdReply(res, 'END', `Login failed: ${e.message}`);
+      }
+    }
+
+    // 2) Register -> 2*FARMER_ID*FULL_NAME*CONTACT*LAND_SIZE*SOIL*PASSWORD
+    if (first === '2') {
+      const prompts = [
+        'Enter Farmer ID:',
+        'Enter Full Name:',
+        'Enter Contact (phone):',
+        'Enter Land Size (acres):',
+        'Enter Soil Type:',
+        'Set Password:'
+      ];
+      if (parts.length <= 6) return ussdReply(res, 'CON', prompts[parts.length - 1]);
+      const [_, farmers_id, fullName, contact, land_size, soil_type, password] = parts;
+      try {
+        await apiPost('/api/register', {
+          farmers_id, fullName, contact, land_size, soil_type, password, confirmPassword: password
+        });
+        return ussdReply(res, 'END', 'Registration successful.');
+      } catch (e) {
+        return ussdReply(res, 'END', `Registration failed: ${e.message}`);
+      }
+    }
+
+    // 3) Weather + ML → 3*CITY*N*P*K*pH*RAINFALL
+    if (first === '3') {
+      const prompts = [
+        'Enter City/Town for weather:',
+        'Enter Nitrogen (N):',
+        'Enter Phosphorus (P):',
+        'Enter Potassium (K):',
+        'Enter soil pH:',
+        'Enter Rainfall (mm):'
+      ];
+      if (parts.length <= 6) return ussdReply(res, 'CON', prompts[parts.length - 1]);
+      const [_, city, N, P, K, ph, rainfall] = parts;
+
+      // optionally fetch weather server-side — if you set OPENWEATHER_API_KEY
+      let temperature, humidity;
+      if (process.env.OPENWEATHER_API_KEY) {
+        try {
+          const ow = await axios.get('https://api.openweathermap.org/data/2.5/weather', {
+            params: { q: city, appid: process.env.OPENWEATHER_API_KEY, units: 'metric' }
+          });
+          temperature = ow?.data?.main?.temp;
+          humidity    = ow?.data?.main?.humidity;
+        } catch { /* ignore weather failure; rely on inputs */ }
+      }
+
+      try {
+        const ml = await apiPost('/api/ml-recommend', {
+          N:+N, P:+P, K:+K, ph:+ph, rainfall:+rainfall,
+          temperature, humidity
+        });
+        const list = Array.isArray(ml.alternatives) && ml.alternatives.length
+          ? `\nAlternatives: ${ml.alternatives.slice(0,5).join(', ')}`
+          : '';
+        return ussdReply(res, 'END', `${ml.message || 'Recommendation ready.'}${list}`);
+      } catch (e) {
+        return ussdReply(res, 'END', `Could not get recommendation: ${e.message}`);
+      }
+    }
+
+    // 4) Record Crop Process -> 4*FARMER_ID*CROP*PROCESS_TYPE*DATE
+    if (first === '4') {
+      const prompts = [
+        'Enter Farmer ID:',
+        'Enter Crop (e.g., maize):',
+        'Process Type (land_prep/planting/irrigation/weed_control/pest_management/fertilization/harvest/soil_management):',
+        'Enter Process Date (YYYY-MM-DD):'
+      ];
+      if (parts.length <= 4) return ussdReply(res, 'CON', prompts[parts.length - 1]);
+
+      const [_, farmers_id, crop, process_type, process_date] = parts;
+      try {
+        // simple saver (no ML) — provided below at /api/Evaluation
+        await apiPost('/api/Evaluation', { farmers_id, crop, process_type, process_date });
+        return ussdReply(res, 'END', 'Process saved.');
+      } catch (e) {
+        return ussdReply(res, 'END', `Save failed: ${e.message}`);
+      }
+    }
+
+    // 5) View My Processes -> 5*FARMER_ID
+    if (first === '5') {
+      if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
+      const farmers_id = parts[1];
+      try {
+        const data = await apiGet('/api/get-processes', { farmers_id });
+        const rows = (data.processes || []).slice(0, 5)
+          .map(p => `${p.process_date?.slice(0,10)} • ${p.crop} • ${p.process_type}`);
+        if (!rows.length) return ussdReply(res, 'END', 'No processes found.');
+        return ussdReply(res, 'END', rows.join('\n'));
+      } catch (e) {
+        return ussdReply(res, 'END', `Lookup failed: ${e.message}`);
+      }
+    }
+
+    // 6) Quick Disease Advice -> 6*symptoms text...
+    if (first === '6') {
+      if (parts.length === 1) return ussdReply(res, 'CON', 'Describe crop symptoms (short):');
+      const symptoms = parts.slice(1).join(' ');
+      try {
+        const data = await apiPost('/api/diagnose-symptoms', { symptoms });
+        const remedies = Array.isArray(data.remedies) ? data.remedies.join(', ') : '-';
+        return ussdReply(res, 'END', `Disease: ${data.disease}\nRemedies: ${remedies}`);
+      } catch (e) {
+        return ussdReply(res, 'END', `Error: ${e.message}`);
+      }
+    }
+
+    // 7) Feedback -> 7*your feedback
+    if (first === '7') {
+      if (parts.length === 1) return ussdReply(res, 'CON', 'Share your feedback (short):');
+      const statusText = parts.slice(1).join(' ');
+      // interpret any feedback as "true" for presence
+      try {
+        const r = await apiPost('/api/feedback', { status: 'true' });
+        return ussdReply(res, 'END', r.message || 'Thanks for your feedback.');
+      } catch (e) {
+        return ussdReply(res, 'END', `Could not save feedback: ${e.message}`);
+      }
+    }
+
+    // 8) Expert Profiles (static)
+    if (first === '8') {
+      const experts = [
+        'Agro Hotline: 0700 000 000',
+        'Soil Lab: 0711 111 111',
+        'County Ext: 0722 222 222'
+      ].join('\n');
+      return ussdReply(res, 'END', experts);
+    }
+
+    // 9) Process Suitability Check (ML) ->
+    // 9*CROP*PROCESS_TYPE*N*P*K*TEMP*HUMID*PH*RAINFALL
+    if (first === '9') {
+      const prompts = [
+        'Crop (e.g., maize):',
+        'Process Type (land_prep/planting/irrigation/weed_control/pest_management/fertilization/harvest/soil_management):',
+        'Nitrogen (N):',
+        'Phosphorus (P):',
+        'Potassium (K):',
+        'Temperature (°C):',
+        'Humidity (%):',
+        'Soil pH:',
+        'Rainfall (mm):'
+      ];
+      if (parts.length <= 9) return ussdReply(res, 'CON', prompts[parts.length - 1]);
+
+      const [_, crop, process_type, N, P, K, temperature, humidity, ph, rainfall] = parts;
+
+      const stageMapEval = {
+        land_prep: 'preplant',
+        planting: 'planting',
+        irrigation: 'vegetative',
+        weed_control: 'vegetative',
+        pest_management: 'vegetative',
+        fertilization: 'vegetative',
+        harvest: 'harvest',
+        soil_management: 'preplant',
+      };
+      const stage = stageMapEval[process_type] || 'vegetative';
+
+      try {
+        const data = await apiPost('/api/process-eval', {
+          crop: String(crop).toLowerCase(),
+          stage,
+          N:+N, P:+P, K:+K,
+          temperature:+temperature,
+          humidity:+humidity,
+          ph:+ph,
+          rainfall:+rainfall
+        });
+        const status = (data.prediction === 'suitable') ? 'Suitable' : 'Not suitable';
+        const pct = Math.round((data.suitability_score || 0) * 100);
+        let msg = `${status}. Score: ${pct}%`;
+        const flags = data.flags || {};
+        const issues = Object.entries(flags).filter(([,v]) => v !== 'ok');
+        if (issues.length) {
+          msg += '\nIssues:';
+          issues.slice(0, 3).forEach(([k, v]) => { msg += `\n- ${k}: ${v}`; });
+        }
+        return ussdReply(res, 'END', msg);
+      } catch (e) {
+        return ussdReply(res, 'END', `Check failed: ${e.message}`);
+      }
+    }
+
+    // fallback
+    return ussdReply(res, 'CON', rootUssdMenu());
+  } catch (err) {
+    console.error('USSD error:', err);
+    return ussdReply(res, 'END', 'An error occurred. Try again later.');
+  }
+});
+// === Simple process save (no ML) ===
+app.post('/api/Evaluation', async (req, res) => {
+  try {
+    const { farmers_id, crop, process_type, process_date } = req.body || {};
+    if (!farmers_id || !crop || !process_type || !process_date) {
+      return res.status(400).json({ message: 'farmers_id, crop, process_type, process_date are required' });
+    }
+    const saved = await CropProcess.create({ farmers_id, crop, process_type, process_date });
+    return res.json({ ok: true, process_id: saved.process_id });
+  } catch (e) {
+    console.error('Evaluation save error:', e);
+    return res.status(500).json({ message: 'Error saving process' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 }).on('error', (err) => {
