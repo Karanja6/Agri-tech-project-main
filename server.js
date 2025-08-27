@@ -438,12 +438,25 @@ app.post('/api/process-eval-save', async (req, res) => {
   }
 });
 // === USSD endpoint (Africa's Talking-style) ===
-app.post('/ussd', async (req, res) => {
-  const { sessionId, phoneNumber, serviceCode, text } = req.body; // provider posts these
-  const parts = (text || '').split('*').filter(Boolean);
+// === USSD endpoint (handles GET for testing and POST for real gateways) ===
+app.all('/ussd', async (req, res) => {
+  // USSD providers usually send x-www-form-urlencoded via POST.
+  // For GET testing in a browser, we'll also read from querystring.
+  const isGet = req.method === 'GET';
+  const sessionId   = isGet ? req.query.sessionId   : req.body.sessionId;
+  const phoneNumber = isGet ? req.query.phoneNumber : req.body.phoneNumber;
+  const serviceCode = isGet ? req.query.serviceCode : req.body.serviceCode;
+  const textRaw     = isGet ? req.query.text        : req.body.text;
+
+  // text is a *-separated menu path (e.g. "1*12345*secret")
+  const text  = (textRaw || '').toString();
+  const parts = text.split('*').filter(Boolean);
   const first = parts[0];
 
-  if (!parts.length) return ussdReply(res, 'CON', rootUssdMenu());
+  // root menu if nothing entered yet
+  if (!parts.length) {
+    return ussdReply(res, 'CON', rootUssdMenu());
+  }
 
   try {
     // 1) Login -> 1*FARMER_ID*PASSWORD
@@ -451,7 +464,7 @@ app.post('/ussd', async (req, res) => {
       if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
       if (parts.length === 2) return ussdReply(res, 'CON', 'Enter Password:');
       const farmers_id = parts[1];
-      const password = parts[2];
+      const password   = parts[2];
       try {
         await apiPost('/api/login', { farmers_id, password });
         return ussdReply(res, 'END', 'Login successful.');
@@ -495,7 +508,6 @@ app.post('/ussd', async (req, res) => {
       if (parts.length <= 6) return ussdReply(res, 'CON', prompts[parts.length - 1]);
       const [_, city, N, P, K, ph, rainfall] = parts;
 
-      // optionally fetch weather server-side — if you set OPENWEATHER_API_KEY
       let temperature, humidity;
       if (process.env.OPENWEATHER_API_KEY) {
         try {
@@ -504,13 +516,12 @@ app.post('/ussd', async (req, res) => {
           });
           temperature = ow?.data?.main?.temp;
           humidity    = ow?.data?.main?.humidity;
-        } catch { /* ignore weather failure; rely on inputs */ }
+        } catch {}
       }
 
       try {
         const ml = await apiPost('/api/ml-recommend', {
-          N:+N, P:+P, K:+K, ph:+ph, rainfall:+rainfall,
-          temperature, humidity
+          N:+N, P:+P, K:+K, ph:+ph, rainfall:+rainfall, temperature, humidity
         });
         const list = Array.isArray(ml.alternatives) && ml.alternatives.length
           ? `\nAlternatives: ${ml.alternatives.slice(0,5).join(', ')}`
@@ -533,7 +544,6 @@ app.post('/ussd', async (req, res) => {
 
       const [_, farmers_id, crop, process_type, process_date] = parts;
       try {
-        // simple saver (no ML) — provided below at /api/Evaluation
         await apiPost('/api/Evaluation', { farmers_id, crop, process_type, process_date });
         return ussdReply(res, 'END', 'Process saved.');
       } catch (e) {
@@ -548,7 +558,7 @@ app.post('/ussd', async (req, res) => {
       try {
         const data = await apiGet('/api/get-processes', { farmers_id });
         const rows = (data.processes || []).slice(0, 5)
-          .map(p => `${p.process_date?.slice(0,10)} • ${p.crop} • ${p.process_type}`);
+          .map(p => `${(p.process_date || '').slice(0,10)} • ${p.crop} • ${p.process_type}`);
         if (!rows.length) return ussdReply(res, 'END', 'No processes found.');
         return ussdReply(res, 'END', rows.join('\n'));
       } catch (e) {
@@ -572,8 +582,6 @@ app.post('/ussd', async (req, res) => {
     // 7) Feedback -> 7*your feedback
     if (first === '7') {
       if (parts.length === 1) return ussdReply(res, 'CON', 'Share your feedback (short):');
-      const statusText = parts.slice(1).join(' ');
-      // interpret any feedback as "true" for presence
       try {
         const r = await apiPost('/api/feedback', { status: 'true' });
         return ussdReply(res, 'END', r.message || 'Thanks for your feedback.');
@@ -592,8 +600,7 @@ app.post('/ussd', async (req, res) => {
       return ussdReply(res, 'END', experts);
     }
 
-    // 9) Process Suitability Check (ML) ->
-    // 9*CROP*PROCESS_TYPE*N*P*K*TEMP*HUMID*PH*RAINFALL
+    // 9) Process Suitability Check -> 9*CROP*PROCESS_TYPE*N*P*K*TEMP*HUMID*PH*RAINFALL
     if (first === '9') {
       const prompts = [
         'Crop (e.g., maize):',
@@ -609,7 +616,6 @@ app.post('/ussd', async (req, res) => {
       if (parts.length <= 9) return ussdReply(res, 'CON', prompts[parts.length - 1]);
 
       const [_, crop, process_type, N, P, K, temperature, humidity, ph, rainfall] = parts;
-
       const stageMapEval = {
         land_prep: 'preplant',
         planting: 'planting',
@@ -647,13 +653,14 @@ app.post('/ussd', async (req, res) => {
       }
     }
 
-    // fallback
+    // fallback to root menu
     return ussdReply(res, 'CON', rootUssdMenu());
   } catch (err) {
     console.error('USSD error:', err);
     return ussdReply(res, 'END', 'An error occurred. Try again later.');
   }
 });
+
 // === Simple process save (no ML) ===
 app.post('/api/Evaluation', async (req, res) => {
   try {
