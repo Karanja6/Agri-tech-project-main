@@ -260,8 +260,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const process_date = formData.get('process_date');
 
       try {
-       const response = await fetch(`${API_BASE}/api/Evaluation', {
-            /register`, {
+        const response = await fetch(`${API_BASE}/api/Evaluation`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ farmers_id, crop, process_type, process_date })
