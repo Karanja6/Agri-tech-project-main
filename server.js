@@ -3,44 +3,66 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const Sequelize = require('sequelize');
 const { DataTypes } = require('sequelize');
-const bodyParser = require('body-parser');
 const cors = require('cors');
 const session = require('express-session');
 require('dotenv').config();
-const PORT = process.env.PORT || 3000;
-const app = express();
+
 const path = require('path');
-const multer = require('multer');
 const axios = require('axios');
 const { spawn } = require('child_process');
-// === USSD helpers ===
-const API_BASE = process.env.API_BASE || `http://localhost:${PORT}`; // calls this same server by default
-// put this ABOVE your /ussd handler
+
+const PORT = process.env.PORT || 3000;
+const app = express();
+
+/* =========================
+   USSD + API helper config
+   ========================= */
+const rawBase = process.env.API_BASE || `http://localhost:${PORT}`;
+const API_BASE = rawBase.endsWith('/') ? rawBase.slice(0, -1) : rawBase;
+
+// JSON for normal APIs
+app.use(express.json());
+
+// x-www-form-urlencoded ONLY for the USSD route (most gateways post like this)
 app.use('/ussd', express.urlencoded({ extended: false }));
+
+// CORS (relax as needed)
+app.use(cors({ origin: '*', credentials: true }));
+
+// Static files (optional site)
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Sessions (used by web login; USSD doesn’t need cookies)
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'randomsetofcharacters',
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: false } // set true behind HTTPS + proxy
+}));
+
 function ussdReply(res, type, message) {
-  // type: 'CON' to continue, 'END' to terminate
   res.set('Content-Type', 'text/plain');
   return res.send(`${type} ${message}`);
 }
 
-async function apiPost(path, payload) {
-  const url = `${API_BASE}${path}`;
+async function apiPost(pathname, payload) {
+  const url = `${API_BASE}${pathname}`;
   try {
     const { data } = await axios.post(url, payload);
     return data;
   } catch (e) {
-    const msg = e?.response?.data?.message || e.message || 'Server error';
+    const msg = e?.response?.data?.message || e?.response?.data?.error || e.message || 'Server error';
     throw new Error(msg);
   }
 }
 
-async function apiGet(path, params) {
-  const url = `${API_BASE}${path}`;
+async function apiGet(pathname, params) {
+  const url = `${API_BASE}${pathname}`;
   try {
     const { data } = await axios.get(url, { params });
     return data;
   } catch (e) {
-    const msg = e?.response?.data?.message || e.message || 'Server error';
+    const msg = e?.response?.data?.message || e?.response?.data?.error || e.message || 'Server error';
     throw new Error(msg);
   }
 }
@@ -59,44 +81,29 @@ function rootUssdMenu() {
     '9. Process Suitability Check',
   ].join('\n');
 }
+
 function fmtDate(d) {
-  try { return new Date(d).toISOString().slice(0,10); }
-  catch { return '-'; }
+  try {
+    const dt = (d instanceof Date) ? d : new Date(d);
+    if (Number.isNaN(dt.getTime())) return '-';
+    return dt.toISOString().slice(0, 10);
+  } catch {
+    return '-';
+  }
 }
-// === End USSD helpers ===
 
-// static files
-app.use(express.static(path.join(__dirname, 'public')));
-
-// sessions
-app.use(session({
-  secret: 'randomsetofcharacters',
-  resave: false,
-  saveUninitialized: true,
-}));
-
-// body parsing
-app.use(express.json());
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(express.urlencoded({ extended: true }));
-
-// cors
-app.use(cors({
-  origin: '*',
-  credentials: true,
-}));
-
-// ---- DB init ----
-const { DB_USER, DB_PASSWORD, DB_HOST } = process.env;
+/* =============
+   Database init
+   ============= */
 let sequelizeWithDB;
 let User, CropProcess, Feedback;
+
 function defineModels(sequelize) {
   const User = sequelize.define('User', {
     farmers_id: { type: DataTypes.INTEGER, primaryKey: true, allowNull: false, unique: true },
     fullname:   { type: DataTypes.STRING, allowNull: false },
-    contact:    { type: DataTypes.INTEGER, allowNull: false },
-    land_size:  { type: DataTypes.INTEGER, allowNull: false },
+    contact:    { type: DataTypes.STRING, allowNull: false }, // allow leading zeros/+
+    land_size:  { type: DataTypes.FLOAT,  allowNull: false },
     soil_type:  { type: DataTypes.STRING, allowNull: false },
     password:   { type: DataTypes.STRING, allowNull: false },
   }, { timestamps: true });
@@ -108,7 +115,7 @@ function defineModels(sequelize) {
     process_type: { type: DataTypes.STRING,  allowNull: false }, // e.g. planting/harvest/etc.
     process_date: { type: DataTypes.DATE,    allowNull: false },
 
-    // NEW: readings (nullable to keep compatibility)
+    // Optional readings
     N:           { type: DataTypes.FLOAT, allowNull: true },
     P:           { type: DataTypes.FLOAT, allowNull: true },
     K:           { type: DataTypes.FLOAT, allowNull: true },
@@ -117,12 +124,12 @@ function defineModels(sequelize) {
     ph:          { type: DataTypes.FLOAT, allowNull: true },
     rainfall:    { type: DataTypes.FLOAT, allowNull: true },
 
-    // NEW: ML outputs
-    stage:             { type: DataTypes.STRING, allowNull: true },  // normalized stage name used by model
-    suitable:          { type: DataTypes.BOOLEAN, allowNull: true }, // true/false
-    suitability_score: { type: DataTypes.FLOAT,   allowNull: true }, // probability
-    flags:             { type: DataTypes.JSON,    allowNull: true }, // {N:'low',...}
-    advice:            { type: DataTypes.TEXT,    allowNull: true }, // "Increase N, Reduce humidity"
+    // ML outputs
+    stage:             { type: DataTypes.STRING, allowNull: true },
+    suitable:          { type: DataTypes.BOOLEAN, allowNull: true },
+    suitability_score: { type: DataTypes.FLOAT,   allowNull: true },
+    flags:             { type: DataTypes.JSON,    allowNull: true },
+    advice:            { type: DataTypes.TEXT,    allowNull: true },
   });
 
   const Feedback = sequelize.define('Feedback', {
@@ -139,6 +146,7 @@ function defineModels(sequelize) {
 
   return { User, CropProcess, Feedback };
 }
+
 const stageMap = {
   land_prep: "land_prep",
   planting: "planting",
@@ -149,6 +157,7 @@ const stageMap = {
   harvest: "harvest",
   soil_management: "soil_management"
 };
+
 async function initializeDatabase() {
   try {
     sequelizeWithDB = new Sequelize(
@@ -159,59 +168,64 @@ async function initializeDatabase() {
         host: process.env.DB_HOST,
         port: process.env.DB_PORT || 5432,
         dialect: process.env.DB_DIALECT || 'postgres',
-        logging: console.log,
+        logging: false,
       }
     );
 
     await sequelizeWithDB.authenticate();
-    console.log('✅ Connected to PostgreSQL database');
+    console.log('✅ Connected to PostgreSQL');
 
     ({ User, CropProcess, Feedback } = defineModels(sequelizeWithDB));
     await sequelizeWithDB.sync({ alter: true });
-    console.log('✅ Models synced successfully');
+    console.log('✅ Models synced');
   } catch (error) {
     console.error('❌ Unable to connect to PostgreSQL:', error);
   }
 }
 initializeDatabase();
-// ---- Routes ----
+
+/* ======
+   Routes
+   ====== */
+
+// Simple health check for your USSD provider to ping
+app.get('/health', (_req, res) => res.json({ ok: true }));
+
 app.get('/', (req, res) => {
-  if (req.session.farmers_id) {
-    return res.redirect('/home');
-  }
-  res.sendFile(path.join(__dirname, 'public', 'login.html')); // your login page
+  if (req.session.farmers_id) return res.redirect('/home');
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
 app.get('/home', (req, res) => {
-  if (!req.session.farmers_id) {
-    return res.redirect('/');
-  }
+  if (!req.session.farmers_id) return res.redirect('/');
   res.sendFile(path.join(__dirname, 'public', 'home.html'));
 });
 
 app.post('/api/register', async (req, res) => {
   const { farmers_id, fullName, contact, land_size, soil_type, password, confirmPassword } = req.body;
+  if (!farmers_id || !fullName || !contact || !land_size || !soil_type || !password) {
+    return res.status(400).json({ message: 'All fields are required' });
+  }
   if (password !== confirmPassword) {
     return res.status(400).json({ message: 'Passwords do not match' });
   }
   try {
     const existingUser = await User.findOne({ where: { farmers_id } });
-    if (existingUser) {
-      return res.status(400).json({ message: 'User with this ID already exists' });
-    }
+    if (existingUser) return res.status(400).json({ message: 'User with this ID already exists' });
+
     const hashedPassword = await bcrypt.hash(password, 10);
-    const newUser = await User.create({
+    await User.create({
       farmers_id,
       fullname: fullName,
-      contact,
-      land_size,
+      contact: String(contact),
+      land_size: Number(land_size),
       soil_type,
       password: hashedPassword,
     });
     res.status(201).json({ message: 'User registered successfully', redirectTo: '/home' });
   } catch (error) {
     console.error('Error during registration:', error);
-    res.status(500).json({ message: 'An error occurred while registering the user', error: error.message });
+    res.status(500).json({ message: 'An error occurred while registering the user' });
   }
 });
 
@@ -219,13 +233,11 @@ app.post('/api/login', async (req, res) => {
   const { farmers_id, password } = req.body;
   try {
     const user = await User.findOne({ where: { farmers_id } });
-    if (!user) {
-      return res.status(400).json({ message: 'Invalid farmers ID or password' });
-    }
+    if (!user) return res.status(400).json({ message: 'Invalid farmers ID or password' });
+
     const isValidPassword = await bcrypt.compare(password, user.password);
-    if (!isValidPassword) {
-      return res.status(400).json({ message: 'Invalid farmers ID or password' });
-    }
+    if (!isValidPassword) return res.status(400).json({ message: 'Invalid farmers ID or password' });
+
     req.session.farmers_id = user.farmers_id;
     res.status(200).json({ message: 'Login successful', redirectTo: '/home' });
   } catch (error) {
@@ -233,24 +245,18 @@ app.post('/api/login', async (req, res) => {
     res.status(500).json({ message: 'Server error during login' });
   }
 });
-// === Process stage evaluation endpoint ===
-// === Stage-aware process evaluation (Windows-safe) ===
+
+// === Stage-aware process evaluation ===
 app.post('/api/process-eval', async (req, res) => {
   const { crop, stage, N, P, K, temperature, humidity, ph, rainfall } = req.body || {};
   const required = [crop, stage, N, P, K, temperature, humidity, ph, rainfall];
-
-  if (required.some(v => v === undefined || v === null || (typeof v === 'number' && isNaN(v)))) {
+  if (required.some(v => v === undefined || v === null || (typeof v === 'number' && Number.isNaN(v)))) {
     return res.status(400).json({ message: 'Missing fields. Require: crop, stage, N,P,K,temperature,humidity,ph,rainfall' });
   }
 
   const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
   const pyPath = path.join(__dirname, 'ml', 'process_predict.py');
-
-  // process_predict.py expects: crop stage N P K temperature humidity ph rainfall
-  const args = [
-    String(crop), String(stage),
-    ...[N, P, K, temperature, humidity, ph, rainfall].map(String)
-  ];
+  const args = [String(crop), String(stage), ...[N, P, K, temperature, humidity, ph, rainfall].map(String)];
 
   const py = spawn(pyCmd, [pyPath, ...args], { cwd: path.join(__dirname, 'ml') });
 
@@ -259,16 +265,12 @@ app.post('/api/process-eval', async (req, res) => {
   py.stderr.on('data', d => err += d.toString());
 
   py.on('close', code => {
-    if (code !== 0) {
-      return res.status(500).json({ message: 'ML process error', error: err || out });
-    }
-    try {
-      return res.json(JSON.parse(out.trim()));
-    } catch {
-      return res.status(500).json({ message: 'Bad ML output', raw: out });
-    }
+    if (code !== 0) return res.status(500).json({ message: 'ML process error', error: err || out });
+    try { return res.json(JSON.parse(out.trim())); }
+    catch { return res.status(500).json({ message: 'Bad ML output', raw: out }); }
   });
 });
+
 app.post('/api/feedback', async (req, res) => {
   try {
     const sessionFarmer = req.session?.farmers_id;
@@ -287,6 +289,7 @@ app.post('/api/feedback', async (req, res) => {
 
 app.get('/api/get-processes', async (req, res) => {
   const { farmers_id } = req.query;
+  if (!farmers_id) return res.status(400).json({ message: 'farmers_id is required' });
   try {
     const processes = await CropProcess.findAll({
       where: { farmers_id },
@@ -310,7 +313,7 @@ app.post('/api/chat', async (req, res) => {
       { prompt: message, max_tokens: 100, temperature: 0.7 },
       { headers: { 'Authorization': `Bearer ${process.env.DEEPINFRA_API_KEY}`, 'Content-Type': 'application/json' } }
     );
-    const reply = response.data.choices[0].text.trim();
+    const reply = response.data.choices?.[0]?.text?.trim() || '';
     res.json({ reply });
   } catch (error) {
     console.error('Error contacting DeepInfra:', error.response?.data || error.message);
@@ -337,11 +340,8 @@ Format: {"disease": "...", "remedies": ["..."]}`;
     if (!reply) return res.status(500).json({ error: 'Empty response from AI' });
 
     let parsed;
-    try {
-      parsed = JSON.parse(reply);
-    } catch {
-      return res.status(500).json({ error: 'Invalid JSON format in AI response', raw: reply });
-    }
+    try { parsed = JSON.parse(reply); }
+    catch { return res.status(500).json({ error: 'Invalid JSON format in AI response', raw: reply }); }
 
     if (!parsed.disease || !Array.isArray(parsed.remedies)) {
       return res.status(500).json({ error: 'Malformed AI response structure.', raw: reply });
@@ -354,12 +354,11 @@ Format: {"disease": "...", "remedies": ["..."]}`;
   }
 });
 
-// === ML recommend endpoint (Windows-safe) ===
+// === ML recommend endpoint ===
 app.post('/api/ml-recommend', async (req, res) => {
   const { N, P, K, temperature, humidity, ph, rainfall } = req.body || {};
   const nums = [N, P, K, temperature, humidity, ph, rainfall];
-
-  if (nums.some(v => v === undefined || v === null || isNaN(Number(v)))) {
+  if (nums.some(v => v === undefined || v === null || Number.isNaN(Number(v)))) {
     return res.status(400).json({ message: 'All numeric fields required: N,P,K,temperature,humidity,ph,rainfall' });
   }
 
@@ -379,88 +378,45 @@ app.post('/api/ml-recommend', async (req, res) => {
     catch { res.status(500).json({ message: 'Bad ML output', raw: out }); }
   });
 });
-app.post('/api/process-eval-save', async (req, res) => {
-  try {
-    const {
-      farmers_id, crop, process_type, process_date,
-      N, P, K, temperature, humidity, ph, rainfall
-    } = req.body || {};
 
-    // simple validation
+// === Simple process save (no ML) ===
+app.post('/api/Evaluation', async (req, res) => {
+  try {
+    const { farmers_id, crop, process_type, process_date } = req.body || {};
     if (!farmers_id || !crop || !process_type || !process_date) {
       return res.status(400).json({ message: 'farmers_id, crop, process_type, process_date are required' });
     }
-    const stage = stageMap[String(process_type).trim()] || String(process_type).trim();
-
-    const nums = [N, P, K, temperature, humidity, ph, rainfall].map(v => Number(v));
-    if (nums.some(v => Number.isNaN(v))) {
-      return res.status(400).json({ message: 'All readings must be numeric: N,P,K,temperature,humidity,ph,rainfall' });
-    }
-
-    // call Python
-    const pyCmd  = process.platform === 'win32' ? 'python' : 'python3';
-    const pyPath = path.join(__dirname, 'ml', 'process_predict.py');
-    const args   = [crop, stage, ...nums.map(String)];
-
-    const py = spawn(pyCmd, [pyPath, ...args], { cwd: path.join(__dirname, 'ml') });
-
-    let out = '', err = '';
-    py.stdout.on('data', d => out += d.toString());
-    py.stderr.on('data', d => err += d.toString());
-
-    py.on('close', async (code) => {
-      if (code !== 0) {
-        return res.status(500).json({ message: 'ML process error', error: err || out });
-      }
-
-      let result;
-      try { result = JSON.parse(out.trim()); }
-      catch (e) { return res.status(500).json({ message: 'Bad ML output', raw: out }); }
-
-      // result shape from process_predict.py:
-      // { prediction: "suitable"|"not suitable",
-      //   suitability_score: 0.87,
-      //   flags: {...}, advice: "Increase N, Reduce humidity" }
-
-      const suitable = result.prediction === 'suitable';
-      const saved = await CropProcess.create({
-        farmers_id, crop, process_type, process_date,
-        N: nums[0], P: nums[1], K: nums[2],
-        temperature: nums[3], humidity: nums[4],
-        ph: nums[5], rainfall: nums[6],
-        stage, suitable,
-        suitability_score: result.suitability_score ?? null,
-        flags: result.flags ?? null,
-        advice: result.advice ?? null,
-      });
-
-      res.json({ ok: true, saved_id: saved.process_id, ...result });
-    });
+    const saved = await CropProcess.create({ farmers_id, crop, process_type, process_date });
+    return res.json({ ok: true, process_id: saved.process_id });
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ message: 'Server error', error: e.message });
+    console.error('Evaluation save error:', e);
+    return res.status(500).json({ message: 'Error saving process' });
   }
 });
-// === USSD endpoint (Africa's Talking-style) ===
-// === USSD endpoint (handles GET for testing and POST for real gateways) ===
+
+/* ======================
+   USSD (GET for testing, POST for provider)
+   ====================== */
 app.all('/ussd', async (req, res) => {
-  // USSD providers usually send x-www-form-urlencoded via POST.
-  // For GET testing in a browser, we'll also read from querystring.
+  // Helpful debug (remove or reduce in production)
+  console.log('[USSD HIT]', {
+    method: req.method,
+    body: req.body,
+    query: req.query,
+    'content-type': req.headers['content-type']
+  });
+
   const isGet = req.method === 'GET';
   const sessionId   = isGet ? req.query.sessionId   : req.body.sessionId;
   const phoneNumber = isGet ? req.query.phoneNumber : req.body.phoneNumber;
   const serviceCode = isGet ? req.query.serviceCode : req.body.serviceCode;
   const textRaw     = isGet ? req.query.text        : req.body.text;
 
-  // text is a *-separated menu path (e.g. "1*12345*secret")
   const text  = (textRaw || '').toString();
   const parts = text.split('*').filter(Boolean);
   const first = parts[0];
 
-  // root menu if nothing entered yet
-  if (!parts.length) {
-    return ussdReply(res, 'CON', rootUssdMenu());
-  }
+  if (!parts.length) return ussdReply(res, 'CON', rootUssdMenu());
 
   try {
     // 1) Login -> 1*FARMER_ID*PASSWORD
@@ -499,36 +455,34 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // 3) Weather + ML → 3*CITY*N*P*K*pH*RAINFALL
-  // 3) Weather + ML → 3*CITY*TEMP*HUMID*N*P*K*pH*RAINFALL
-if (first === '3') {
-  const prompts = [
-    'Enter City/Town:',
-    'Enter Temperature (°C):',
-    'Enter Humidity (%):',
-    'Enter Nitrogen (N):',
-    'Enter Phosphorus (P):',
-    'Enter Potassium (K):',
-    'Enter soil pH:',
-    'Enter Rainfall (mm):'
-  ];
-  if (parts.length <= 8) return ussdReply(res, 'CON', prompts[parts.length - 1]);
+    // 3) Weather + ML → 3*CITY*TEMP*HUMID*N*P*K*pH*RAINFALL
+    if (first === '3') {
+      const prompts = [
+        'Enter City/Town:',
+        'Enter Temperature (°C):',
+        'Enter Humidity (%):',
+        'Enter Nitrogen (N):',
+        'Enter Phosphorus (P):',
+        'Enter Potassium (K):',
+        'Enter soil pH:',
+        'Enter Rainfall (mm):'
+      ];
+      if (parts.length <= 8) return ussdReply(res, 'CON', prompts[parts.length - 1]);
 
-  const [_, city, temperature, humidity, N, P, K, ph, rainfall] = parts;
-
-  try {
-    const ml = await apiPost('/api/ml-recommend', {
-      N:+N, P:+P, K:+K, ph:+ph, rainfall:+rainfall,
-      temperature:+temperature, humidity:+humidity
-    });
-    const list = Array.isArray(ml.alternatives) && ml.alternatives.length
-      ? `\nAlternatives: ${ml.alternatives.slice(0,5).join(', ')}`
-      : '';
-    return ussdReply(res, 'END', `${ml.message || 'Recommendation ready.'}${list}`);
-  } catch (e) {
-    return ussdReply(res, 'END', `Could not get recommendation: ${e.message}`);
-  }
-}
+      const [_, city, temperature, humidity, N, P, K, ph, rainfall] = parts;
+      try {
+        const ml = await apiPost('/api/ml-recommend', {
+          N:+N, P:+P, K:+K, ph:+ph, rainfall:+rainfall,
+          temperature:+temperature, humidity:+humidity
+        });
+        const list = Array.isArray(ml.alternatives) && ml.alternatives.length
+          ? `\nAlternatives: ${ml.alternatives.slice(0,5).join(', ')}`
+          : '';
+        return ussdReply(res, 'END', `${ml.message || 'Recommendation ready.'}${list}`);
+      } catch (e) {
+        return ussdReply(res, 'END', `Could not get recommendation: ${e.message}`);
+      }
+    }
 
     // 4) Record Crop Process -> 4*FARMER_ID*CROP*PROCESS_TYPE*DATE
     if (first === '4') {
@@ -550,23 +504,20 @@ if (first === '3') {
     }
 
     // 5) View My Processes -> 5*FARMER_ID
-   // 5) View My Processes -> 5*FARMER_ID
-   // 5) View My Processes -> 5*FARMER_ID
-if (first === '5') {
-  if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
-  const farmers_id = parts[1];
-  try {
-    const data = await apiGet('/api/get-processes', { farmers_id });
+    if (first === '5') {
+      if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
+      const farmers_id = parts[1];
+      try {
+        const data = await apiGet('/api/get-processes', { farmers_id });
+        const rows = (data.processes || []).slice(0, 5)
+          .map(p => `${fmtDate(p.process_date)} • ${p.crop} • ${p.process_type}`);
+        if (!rows.length) return ussdReply(res, 'END', 'No processes found.');
+        return ussdReply(res, 'END', rows.join('\n'));
+      } catch (e) {
+        return ussdReply(res, 'END', `Lookup failed: ${e.message}`);
+      }
+    }
 
-    const rows = (data.processes || []).slice(0, 5)
-      .map(p => `${fmtDate(p.process_date)} • ${p.crop} • ${p.process_type}`);
-
-    if (!rows.length) return ussdReply(res, 'END', 'No processes found.');
-    return ussdReply(res, 'END', rows.join('\n'));
-  } catch (e) {
-    return ussdReply(res, 'END', `Lookup failed: ${e.message}`);
-  }
-}
     // 6) Quick Disease Advice -> 6*symptoms text...
     if (first === '6') {
       if (parts.length === 1) return ussdReply(res, 'CON', 'Describe crop symptoms (short):');
@@ -580,21 +531,18 @@ if (first === '5') {
       }
     }
 
-    // 7) Feedback -> 7*your feedback
-  // 7) Feedback -> 7*FARMER_ID*your feedback
-if (first === '7') {
-  if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
-  if (parts.length === 2) return ussdReply(res, 'CON', 'Share your feedback (short):');
-  const farmers_id = parts[1];
-  const statusText = parts.slice(2).join(' ');
-  try {
-    const r = await apiPost('/api/feedback', { farmers_id, status: 'true' });
-    return ussdReply(res, 'END', r.message || 'Thanks for your feedback.');
-  } catch (e) {
-    return ussdReply(res, 'END', `Could not save feedback: ${e.message}`);
-  }
-}
-
+    // 7) Feedback -> 7*FARMER_ID*your feedback (we store boolean only)
+    if (first === '7') {
+      if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
+      if (parts.length === 2) return ussdReply(res, 'CON', 'Share your feedback (short):');
+      const farmers_id = parts[1];
+      try {
+        const r = await apiPost('/api/feedback', { farmers_id, status: 'true' });
+        return ussdReply(res, 'END', r.message || 'Thanks for your feedback.');
+      } catch (e) {
+        return ussdReply(res, 'END', `Could not save feedback: ${e.message}`);
+      }
+    }
 
     // 8) Expert Profiles (static)
     if (first === '8') {
@@ -659,7 +607,7 @@ if (first === '7') {
       }
     }
 
-    // fallback to root menu
+    // Fallback to root menu
     return ussdReply(res, 'CON', rootUssdMenu());
   } catch (err) {
     console.error('USSD error:', err);
@@ -667,24 +615,12 @@ if (first === '7') {
   }
 });
 
-// === Simple process save (no ML) ===
-app.post('/api/Evaluation', async (req, res) => {
-  try {
-    const { farmers_id, crop, process_type, process_date } = req.body || {};
-    if (!farmers_id || !crop || !process_type || !process_date) {
-      return res.status(400).json({ message: 'farmers_id, crop, process_type, process_date are required' });
-    }
-    const saved = await CropProcess.create({ farmers_id, crop, process_type, process_date });
-    return res.json({ ok: true, process_id: saved.process_id });
-  } catch (e) {
-    console.error('Evaluation save error:', e);
-    return res.status(500).json({ message: 'Error saving process' });
-  }
-});
-
+/* =========
+   Listener
+   ========= */
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`API_BASE: ${API_BASE}`);
 }).on('error', (err) => {
   console.error('Server failed to start:', err);
 });
-
