@@ -15,7 +15,8 @@ const axios = require('axios');
 const { spawn } = require('child_process');
 // === USSD helpers ===
 const API_BASE = process.env.API_BASE || `http://localhost:${PORT}`; // calls this same server by default
-
+// put this ABOVE your /ussd handler
+app.use('/ussd', express.urlencoded({ extended: false }));
 function ussdReply(res, type, message) {
   // type: 'CON' to continue, 'END' to terminate
   res.set('Content-Type', 'text/plain');
@@ -57,6 +58,10 @@ function rootUssdMenu() {
     '8. Expert Profiles',
     '9. Process Suitability Check',
   ].join('\n');
+}
+function fmtDate(d) {
+  try { return new Date(d).toISOString().slice(0,10); }
+  catch { return '-'; }
 }
 // === End USSD helpers ===
 
@@ -545,19 +550,29 @@ if (first === '3') {
     }
 
     // 5) View My Processes -> 5*FARMER_ID
-    if (first === '5') {
-      if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
-      const farmers_id = parts[1];
-      try {
-        const data = await apiGet('/api/get-processes', { farmers_id });
-        const rows = (data.processes || []).slice(0, 5)
-          .map(p => `${(p.process_date || '').slice(0,10)} • ${p.crop} • ${p.process_type}`);
-        if (!rows.length) return ussdReply(res, 'END', 'No processes found.');
-        return ussdReply(res, 'END', rows.join('\n'));
-      } catch (e) {
-        return ussdReply(res, 'END', `Lookup failed: ${e.message}`);
-      }
-    }
+   // 5) View My Processes -> 5*FARMER_ID
+if (first === '5') {
+  if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
+  const farmers_id = parts[1];
+  try {
+    const data = await apiGet('/api/get-processes', { farmers_id });
+
+    // safe date formatter (handles Date objects or strings)
+    const fmtDate = (d) => {
+      try { return new Date(d).toISOString().slice(0,10); }
+      catch { return '-'; }
+    };
+
+    const rows = (data.processes || []).slice(0, 5)
+      .map(p => `${fmtDate(p.process_date)} • ${p.crop} • ${p.process_type}`);
+
+    if (!rows.length) return ussdReply(res, 'END', 'No processes found.');
+    return ussdReply(res, 'END', rows.join('\n'));
+  } catch (e) {
+    return ussdReply(res, 'END', `Lookup failed: ${e.message}`);
+  }
+}
+
 
     // 6) Quick Disease Advice -> 6*symptoms text...
     if (first === '6') {
