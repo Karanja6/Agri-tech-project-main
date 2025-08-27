@@ -208,13 +208,12 @@ app.post('/api/process-eval', async (req, res) => {
   });
 });
 
-app.get('/home', (req, res) => {
-  if (!req.session.farmers_id) {
-    return res.redirect('/');
+app.get('/', (req, res) => {
+  if (req.session.farmers_id) {
+    return res.redirect('/home');
   }
-  res.sendFile(path.join(__dirname, 'public', 'home.html'));
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
-
 app.post('/api/feedback', async (req, res) => {
   const farmers_id = req.session.farmers_id;
   console.log('Farmers ID from session:', farmers_id);
