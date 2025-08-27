@@ -40,27 +40,6 @@ app.use(cors({
 const { DB_USER, DB_PASSWORD, DB_HOST } = process.env;
 let sequelizeWithDB;
 let User, CropProcess, Feedback;
-
-async function initializeDatabase() {
-  try {
-    const sequelizeWithoutDB = new Sequelize(`mysql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:3306`, { logging: console.log });
-    await sequelizeWithoutDB.authenticate();
-    console.log('Connection to MySQL server has been established successfully.');
-
-    await sequelizeWithoutDB.query('CREATE DATABASE IF NOT EXISTS farmers_db');
-    console.log('Database "farmers_db" created or already exists.');
-
-    sequelizeWithDB = new Sequelize(`mysql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:3306/farmers_db`, { logging: console.log });
-    await sequelizeWithDB.authenticate();
-    console.log('Connected to the "farmers_db" successfully.');
-
-    ({ User, CropProcess, Feedback } = defineModels(sequelizeWithDB));
-    await sequelizeWithDB.sync({ alter: true });
-    console.log('Database synced successfully!');
-  } catch (error) {
-    console.error('Unable to initialize the database:', error);
-  }
-}
 function defineModels(sequelize) {
   const User = sequelize.define('User', {
     farmers_id: { type: DataTypes.INTEGER, primaryKey: true, allowNull: false, unique: true },
@@ -143,6 +122,7 @@ async function initializeDatabase() {
     console.error('❌ Unable to connect to PostgreSQL:', error);
   }
 }
+initializeDatabase();
 // ---- Routes ----
 app.post('/api/register', async (req, res) => {
   const { farmers_id, fullName, contact, land_size, soil_type, password, confirmPassword } = req.body;
@@ -189,25 +169,39 @@ app.post('/api/login', async (req, res) => {
   }
 });
 // === Process stage evaluation endpoint ===
+// === Stage-aware process evaluation (Windows-safe) ===
 app.post('/api/process-eval', async (req, res) => {
   const { crop, stage, N, P, K, temperature, humidity, ph, rainfall } = req.body || {};
-  const fields = [crop, stage, N, P, K, temperature, humidity, ph, rainfall];
-  if (fields.some(v => v === undefined || v === null || (typeof v === 'number' && isNaN(v)))) {
-    return res.status(400).json({ message: 'Fields required: crop,stage,N,P,K,temperature,humidity,ph,rainfall' });
+  const required = [crop, stage, N, P, K, temperature, humidity, ph, rainfall];
+
+  if (required.some(v => v === undefined || v === null || (typeof v === 'number' && isNaN(v)))) {
+    return res.status(400).json({ message: 'Missing fields. Require: crop, stage, N,P,K,temperature,humidity,ph,rainfall' });
   }
 
   const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
   const pyPath = path.join(__dirname, 'ml', 'process_predict.py');
-  const args = [String(crop), String(stage), ...[N,P,K,temperature,humidity,ph,rainfall].map(String)];
+
+  // process_predict.py expects: crop stage N P K temperature humidity ph rainfall
+  const args = [
+    String(crop), String(stage),
+    ...[N, P, K, temperature, humidity, ph, rainfall].map(String)
+  ];
 
   const py = spawn(pyCmd, [pyPath, ...args], { cwd: path.join(__dirname, 'ml') });
+
   let out = '', err = '';
   py.stdout.on('data', d => out += d.toString());
   py.stderr.on('data', d => err += d.toString());
+
   py.on('close', code => {
-    if (code !== 0) return res.status(500).json({ message: 'Process ML error', error: err || out });
-    try { res.json(JSON.parse(out.trim())); }
-    catch { res.status(500).json({ message: 'Bad process ML output', raw: out }); }
+    if (code !== 0) {
+      return res.status(500).json({ message: 'ML process error', error: err || out });
+    }
+    try {
+      return res.json(JSON.parse(out.trim()));
+    } catch {
+      return res.status(500).json({ message: 'Bad ML output', raw: out });
+    }
   });
 });
 
@@ -391,3 +385,9 @@ app.post('/api/process-eval-save', async (req, res) => {
     res.status(500).json({ message: 'Server error', error: e.message });
   }
 });
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+}).on('error', (err) => {
+  console.error('Server failed to start:', err);
+});
+
