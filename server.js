@@ -128,7 +128,7 @@ app.get('/', (req, res) => {
   if (req.session.farmers_id) {
     return res.redirect('/home');
   }
-  res.sendFile(path.join(__dirname, 'public', 'index.html')); // your login page
+  res.sendFile(path.join(__dirname, 'public', 'login.html')); // your login page
 });
 
 app.get('/home', (req, res) => {
