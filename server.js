@@ -124,6 +124,9 @@ async function initializeDatabase() {
 }
 initializeDatabase();
 // ---- Routes ----
+app.get('/', (req, res) => {
+  res.redirect('/home');
+});
 app.post('/api/register', async (req, res) => {
   const { farmers_id, fullName, contact, land_size, soil_type, password, confirmPassword } = req.body;
   if (password !== confirmPassword) {
