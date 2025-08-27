@@ -551,17 +551,12 @@ if (first === '3') {
 
     // 5) View My Processes -> 5*FARMER_ID
    // 5) View My Processes -> 5*FARMER_ID
+   // 5) View My Processes -> 5*FARMER_ID
 if (first === '5') {
   if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
   const farmers_id = parts[1];
   try {
     const data = await apiGet('/api/get-processes', { farmers_id });
-
-    // safe date formatter (handles Date objects or strings)
-    const fmtDate = (d) => {
-      try { return new Date(d).toISOString().slice(0,10); }
-      catch { return '-'; }
-    };
 
     const rows = (data.processes || []).slice(0, 5)
       .map(p => `${fmtDate(p.process_date)} • ${p.crop} • ${p.process_type}`);
@@ -572,8 +567,6 @@ if (first === '5') {
     return ussdReply(res, 'END', `Lookup failed: ${e.message}`);
   }
 }
-
-
     // 6) Quick Disease Advice -> 6*symptoms text...
     if (first === '6') {
       if (parts.length === 1) return ussdReply(res, 'CON', 'Describe crop symptoms (short):');
