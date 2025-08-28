@@ -1,16 +1,16 @@
 // server.js
 require('dotenv').config();
 
-const express  = require('express');
-const bcrypt   = require('bcryptjs');
+const express   = require('express');
+const bcrypt    = require('bcryptjs');
 const Sequelize = require('sequelize');
 const { DataTypes } = require('sequelize');
-const cors     = require('cors');
-const session  = require('express-session');
-const path     = require('path');                 // <-- moved before use
-const multer   = require('multer');
-const upload   = multer({ dest: path.join(__dirname, 'uploads') }); // <-- now safe
-const axios    = require('axios');
+const cors      = require('cors');
+const session   = require('express-session');
+const path      = require('path'); // must be before multer uses it
+const multer    = require('multer');
+const upload    = multer({ dest: path.join(__dirname, 'uploads') });
+const axios     = require('axios');
 const { spawn } = require('child_process');
 
 const PORT = process.env.PORT || 3000;
@@ -22,7 +22,7 @@ const app  = express();
 const rawBase  = process.env.API_BASE || `http://localhost:${PORT}`;
 const API_BASE = rawBase.endsWith('/') ? rawBase.slice(0, -1) : rawBase;
 
-app.set('trust proxy', 1); // allow secure cookies when behind a proxy (Render/NGINX/etc.)
+app.set('trust proxy', 1); // Render / proxies
 
 // JSON for normal APIs
 app.use(express.json());
@@ -31,14 +31,13 @@ app.use(express.json());
 app.use('/ussd', express.urlencoded({ extended: false }));
 
 // ------------ CORS ------------
-// If you don't need cross-site cookies, you can just use origin:'*' & credentials:false.
-// If you DO need cookies from a separate frontend domain, list it here and set credentials:true.
+// If frontend is same-origin (served by this server on Render), CORS won’t be used.
+// If you host UI elsewhere, add that origin here and keep credentials:true.
 app.use(cors({
   origin: [
     'http://localhost:3000',
     'http://localhost:5173',
-    // add your deployed frontend origin here, e.g.:
-    // 'https://your-frontend-domain.com'
+    'https://agri-tech-app.onrender.com'
   ],
   credentials: true
 }));
@@ -52,8 +51,8 @@ app.use(session({
   resave: false,
   saveUninitialized: true,
   cookie: {
-    secure: process.env.NODE_ENV === 'production',         // true on HTTPS
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
+    secure: process.env.NODE_ENV === 'production',                   // true on HTTPS
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax' // allow cross-site in prod
   }
 }));
 
@@ -110,7 +109,7 @@ function fmtDate(d) {
 }
 
 /* ================
-   Database init
+//  Database init
    ================ */
 let sequelizeWithDB;
 let User, CropProcess, Feedback;
@@ -119,7 +118,7 @@ function defineModels(sequelize) {
   const User = sequelize.define('User', {
     farmers_id: { type: DataTypes.INTEGER, primaryKey: true, allowNull: false, unique: true },
     fullname:   { type: DataTypes.STRING,  allowNull: false },
-    contact:    { type: DataTypes.STRING,  allowNull: false }, // keep as string for leading zeros/+
+    contact:    { type: DataTypes.STRING,  allowNull: false }, // keep as string for leading zeros/+ and country codes
     land_size:  { type: DataTypes.FLOAT,   allowNull: false },
     soil_type:  { type: DataTypes.STRING,  allowNull: false },
     password:   { type: DataTypes.STRING,  allowNull: false },
@@ -175,11 +174,16 @@ async function initializeDatabase() {
         port: process.env.DB_PORT || 5432,
         dialect: process.env.DB_DIALECT || 'postgres',
         logging: false,
+        // Render Postgres typically requires SSL
+        dialectOptions: (process.env.NODE_ENV === 'production' || process.env.DB_SSL === 'true')
+          ? { ssl: { require: true, rejectUnauthorized: false } }
+          : {}
       }
     );
 
     await sequelizeWithDB.authenticate();
-    console.log('✅ Connected to PostgreSQL');
+    console.log('✅ Connected to PostgreSQL (ssl:',
+      (process.env.NODE_ENV === 'production' || process.env.DB_SSL === 'true'), ')');
 
     ({ User, CropProcess, Feedback } = defineModels(sequelizeWithDB));
     await sequelizeWithDB.sync({ alter: true });
@@ -189,6 +193,15 @@ async function initializeDatabase() {
   }
 }
 initializeDatabase();
+
+// Guard so routes fail clearly if DB isn’t ready
+function ensureDBReady(res) {
+  if (!User || !CropProcess || !Feedback) {
+    res.status(503).json({ message: 'Database not initialized yet. Please try again shortly.' });
+    return false;
+  }
+  return true;
+}
 
 /* ======
    Routes
@@ -208,6 +221,7 @@ app.get('/home', (req, res) => {
 });
 
 app.post('/api/register', async (req, res) => {
+  if (!ensureDBReady(res)) return;
   const { farmers_id, fullName, contact, land_size, soil_type, password, confirmPassword } = req.body;
   if (!farmers_id || !fullName || !contact || !land_size || !soil_type || !password) {
     return res.status(400).json({ message: 'All fields are required' });
@@ -236,6 +250,7 @@ app.post('/api/register', async (req, res) => {
 });
 
 app.post('/api/login', async (req, res) => {
+  if (!ensureDBReady(res)) return;
   const { farmers_id, password } = req.body;
   try {
     const user = await User.findOne({ where: { farmers_id } });
@@ -278,6 +293,7 @@ app.post('/api/process-eval', async (req, res) => {
 });
 
 app.post('/api/feedback', async (req, res) => {
+  if (!ensureDBReady(res)) return;
   try {
     const sessionFarmer = req.session?.farmers_id;
     const { farmers_id: bodyFarmer, status } = req.body || {};
@@ -294,6 +310,7 @@ app.post('/api/feedback', async (req, res) => {
 });
 
 app.get('/api/get-processes', async (req, res) => {
+  if (!ensureDBReady(res)) return;
   const { farmers_id } = req.query;
   if (!farmers_id) return res.status(400).json({ message: 'farmers_id is required' });
   try {
@@ -407,6 +424,7 @@ app.post('/api/ml-recommend', async (req, res) => {
 
 // === Simple process save (no ML) ===
 app.post('/api/Evaluation', async (req, res) => {
+  if (!ensureDBReady(res)) return;
   try {
     const { farmers_id, crop, process_type, process_date } = req.body || {};
     if (!farmers_id || !crop || !process_type || !process_date) {
@@ -429,16 +447,6 @@ app.post('/api/upload-image', upload.single('cropImage'), async (req, res) => {
     if (!req.file) return res.status(400).json({ message: 'No image uploaded (field: cropImage)' });
 
     const imgPath = req.file.path;
-
-    // --- QUICK placeholder so the UI works immediately ---
-    // return res.json({
-    //   disease: 'Leaf Blight (placeholder)',
-    //   remedies: [
-    //     'Remove affected leaves',
-    //     'Improve ventilation',
-    //     'Apply copper-based fungicide as directed'
-    //   ]
-    // });
 
     // --- OPTIONAL: Call your Python model instead ---
     const pyCmd  = process.platform === 'win32' ? 'python' : 'python3';
@@ -693,6 +701,7 @@ app.all('/ussd', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`API_BASE: ${API_BASE}`);
+  console.log('DB host:', process.env.DB_HOST, 'ssl:', (process.env.NODE_ENV === 'production' || process.env.DB_SSL === 'true'));
 }).on('error', (err) => {
   console.error('Server failed to start:', err);
 });
