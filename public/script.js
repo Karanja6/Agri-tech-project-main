@@ -10,6 +10,9 @@ document.addEventListener('DOMContentLoaded', () => {
       ? 'http://localhost:3000'
       : window.location.origin);
 
+  // ---------------------------------
+  // Tiny helpers
+  // ---------------------------------
   const $ = (id) => document.getElementById(id);
   const safeJson = async (res) => { try { return await res.json(); } catch { return {}; } };
   const safeFetch = async (url, opts = {}) => {
@@ -24,12 +27,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
   const getVal = (id) => $(id)?.value?.trim();
-  const getNum = (id) => {
-    const el = $(id);
-    if (!el) return NaN;
-    const n = parseFloat(String(el.value ?? '').trim());
-    return Number.isFinite(n) ? n : NaN;
-  };
   const toISODate = (d) => {
     try { const dt = new Date(d); return Number.isNaN(dt.getTime()) ? '-' : dt.toISOString().slice(0,10); }
     catch { return '-'; }
@@ -91,34 +88,79 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ---------------------------------
-  // Weather (used inside Manual Modal)
+  // WEATHER (main button + manual modal)
   // ---------------------------------
+  function fillIfInput(id, val) {
+    const el = $(id);
+    if (el && 'value' in el) {
+      el.value = (val ?? '');
+      el.classList.add('just-filled');
+      setTimeout(() => el.classList.remove('just-filled'), 800);
+    }
+  }
+  function setIfText(id, text) {
+    const el = $(id);
+    if (el && !('value' in el)) el.textContent = text;
+  }
+  function applyWeatherToUI(data) {
+    if (!data) return;
+    const t = data?.main?.temp;
+    const h = data?.main?.humidity;
+    const wind = data?.wind?.speed;
+    const clouds = data?.clouds?.all;
+    const pressure = data?.main?.pressure;
+
+    // Fill modal inputs if present
+    fillIfInput('manual_temperature', t);
+    fillIfInput('manual_humidity', h);
+
+    // Fill page inputs if present
+    fillIfInput('temperature', t);
+    fillIfInput('humidity', h);
+
+    // Optional text labels (if you have them)
+    if (t != null) setIfText('temperatureText', `Temperature: ${t} °C`);
+    if (wind != null) setIfText('wind', `Wind Speed: ${wind} m/s`);
+    if (clouds != null) setIfText('clouds', `Cloud Coverage: ${clouds} %`);
+    if (pressure != null) setIfText('pressure', `Pressure: ${pressure} hPa`);
+  }
+  async function fetchAndApplyWeather(city) {
+    const url = `${API_BASE}/api/weather?city=${encodeURIComponent(city)}`;
+    const data = await safeFetch(url); // throws with server message (e.g., invalid API key)
+    applyWeatherToUI(data);
+  }
+
+  // Manual modal: “Use City Weather”
   const manualCityFetchBtn = $('manualCityFetchBtn');
   if (manualCityFetchBtn) {
     manualCityFetchBtn.addEventListener('click', async () => {
       const city = getVal('manual_eval_city');
       if (!city) return alert('Enter a town/city first.');
       try {
-        const w = await safeFetch(`${API_BASE}/api/weather?city=${encodeURIComponent(city)}`);
-        const t = w?.main?.temp, h = w?.main?.humidity;
-        if (!Number.isNaN(t)) {
-          $('manual_temperature').value = t ?? '';
-          $('manual_temperature').classList.add('just-filled');
-          setTimeout(()=>$('manual_temperature').classList.remove('just-filled'), 800);
-        }
-        if (!Number.isNaN(h)) {
-          $('manual_humidity').value = h ?? '';
-          $('manual_humidity').classList.add('just-filled');
-          setTimeout(()=>$('manual_humidity').classList.remove('just-filled'), 800);
-        }
-      } catch {
-        alert('Could not fetch weather for that town.');
+        await fetchAndApplyWeather(city);
+      } catch (err) {
+        alert(`Weather failed: ${err.message}`);
+      }
+    });
+  }
+
+  // Main page: “Get weather” (if present on the page)
+  const fetchWeatherBtn = $('fetchWeatherBtn');
+  if (fetchWeatherBtn) {
+    fetchWeatherBtn.addEventListener('click', async () => {
+      // Prefer a dedicated #location input; fall back to the modal field if needed
+      const city = getVal('location') || getVal('manual_eval_city');
+      if (!city) return alert('Please enter a city name.');
+      try {
+        await fetchAndApplyWeather(city);
+      } catch (err) {
+        alert(`Weather failed: ${err.message}`);
       }
     });
   }
 
   // ---------------------------------
-  // Generic recommended ranges (for status badges)
+  // Status ranges and helpers for grid
   // ---------------------------------
   const REC = {
     N:  { min: 80,  max: 120 },
@@ -149,7 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
     (new Date(b.process_date).getTime()||0) - (new Date(a.process_date).getTime()||0);
 
   // ---------------------------------
-  // Data source toggle → shows/hides "Add Manual Process"
+  // Data source toggle → show/hide "Add Manual Process"
   // ---------------------------------
   const srcSensors = $('srcSensors');
   const srcManual  = $('srcManual');
@@ -186,7 +228,6 @@ document.addEventListener('DOMContentLoaded', () => {
     cachedProcesses = data?.processes || [];
     return cachedProcesses;
   }
-
   function groupByCrop(rows) {
     const map = new Map();
     (rows || []).forEach(r => {
@@ -197,7 +238,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     return map;
   }
-
   function pickLatestReading(rows) {
     const sorted = [...rows].sort(latestFirst);
     for (const r of sorted) {
@@ -368,7 +408,9 @@ document.addEventListener('DOMContentLoaded', () => {
     manualModal.addEventListener('click', (e) => { if (e.target === manualModal) closeManualModal(); });
   }
 
-  // Stage mapping for ML
+  // ---------------------------------
+  // Evaluate & Save (Manual Modal)
+  // ---------------------------------
   const stageMapEval = {
     land_prep: 'preplant',
     planting: 'planting',
@@ -379,7 +421,6 @@ document.addEventListener('DOMContentLoaded', () => {
     harvest: 'harvest',
     soil_management: 'preplant'
   };
-
   async function saveProcess(payload) {
     return safeFetch(`${API_BASE}/api/Evaluation`, {
       method: 'POST',
@@ -394,9 +435,9 @@ document.addEventListener('DOMContentLoaded', () => {
       body: JSON.stringify(payload)
     });
   }
-  function currentCropRows() {
-    const crop = (currentSelectedCrop || '').toLowerCase();
-    return cachedProcesses.filter(r => (r.crop||'').toLowerCase() === crop);
+  function groupByCropFromCache(crop) {
+    const byCrop = groupByCrop(cachedProcesses);
+    return byCrop.get(crop) || [];
   }
   function refreshAfterSave() {
     const fid = getVal('manual_farmers_id') || currentFarmerId || getVal('farmer_id_input');
@@ -451,6 +492,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const crop = (getVal('manual_crop') || '').toLowerCase();
       const process_type = getVal('manual_process_type');
       const process_date = getVal('manual_process_date');
+
       const N = +getVal('manual_N');
       const P = +getVal('manual_P');
       const K = +getVal('manual_K');
