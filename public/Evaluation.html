@@ -6,26 +6,48 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Farmers Evaluation</title>
   <style>
-    /* Tiny additions for status colors */
+    /* Status colors / tiny helpers */
     .status-ok   { color:#1e5631; font-weight:700; }
     .status-low  { color:#b00020; font-weight:700; }
     .status-high { color:#b00020; font-weight:700; }
     .just-filled { outline:2px solid #3fa34d; background:#f2fff4; transition:background-color .8s ease; }
-    .eval-card   { max-width:900px; margin:0 auto; }
-    .eval-actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
-    .sm-hint     { display:block; margin-top:6px; color:#3d3d3d; font-size:.95rem; }
+    .eval-card   { max-width:1100px; margin:0 auto; padding:0 10px; }
+    .toolbar     { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:12px 0; }
+    .sm-hint     { color:#3d3d3d; font-size:.95rem; }
     .tight { white-space:nowrap; }
+    input[type="number"], input[type="text"], input[type="date"], input[type="tel"], select {
+      width:100%; padding:.55rem .6rem; border:1px solid #e5e7eb; border-radius:6px;
+    }
+    label { display:flex; flex-direction:column; gap:6px; }
 
-    /* New: cards/badges/grid/modal */
+    /* Cards / badges / grid */
     .badge { display:inline-block; padding:.15rem .4rem; border-radius:.4rem; font-size:.8rem; font-weight:700 }
     .badge-ok { background:#e9f7ef; color:#1e5631 }
     .badge-low, .badge-high { background:#fdecea; color:#b00020 }
-    .card { border:1px solid #e5e7eb; border-radius:8px; padding:12px; cursor:pointer; background:#fff }
-    .card:hover { box-shadow:0 2px 10px rgba(0,0,0,.06) }
+    .card { border:1px solid #e5e7eb; border-radius:10px; padding:14px; cursor:pointer; background:#fff }
+    .card:hover { box-shadow:0 2px 12px rgba(0,0,0,.07) }
     .card h4 { margin:.2rem 0 .35rem }
     .meta { color:#555; font-size:.9rem }
-    #cropDetailModal { position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; padding:16px }
-    #cropDetailModal > div { background:#fff; max-width:780px; width:100%; border-radius:8px; padding:16px; max-height:85vh; overflow:auto }
+    #cropGrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; margin-top:12px }
+
+    /* Modal base */
+    .modal { position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; padding:16px; z-index:1000 }
+    .modal > .box { background:#fff; width:100%; max-width:900px; border-radius:10px; padding:16px; max-height:88vh; overflow:auto }
+    .modal .header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .modal .header h3 { margin:0; }
+    .modal .close { border:none; background:#f5f5f5; padding:.35rem .6rem; border-radius:6px; cursor:pointer; font-size:1rem }
+    .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+    .btn { border:1px solid #e5e7eb; background:#fff; padding:.55rem .8rem; border-radius:6px; cursor:pointer }
+    .btn.primary { background:#1f7a54; color:#fff; border-color:#1f7a54 }
+    .btn.warn { background:#b00020; color:#fff; border-color:#b00020 }
+
+    table.process-table { width:100%; border-collapse:collapse; }
+    table.process-table th, table.process-table td { border-bottom:1px solid #ececec; padding:8px; text-align:left; }
+    table.process-table thead th { background:#fafafa; }
+
+    /* 2-column form grid inside modal */
+    .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    @media (max-width: 720px) { .form-grid { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
@@ -38,157 +60,134 @@
     <a href="/market.html">Market</a>
   </nav>
 
-  <header class="eval-card"><h1>Farmers Evaluation</h1></header>
+  <header class="eval-card">
+    <h1>Farmers Evaluation</h1>
+  </header>
 
   <main class="eval-card">
-    <!-- Data source toggle -->
-    <section style="display:flex;gap:16px;align-items:center;margin:12px 0">
+    <!-- Toolbar -->
+    <section class="toolbar">
       <strong>Data source:</strong>
-      <label><input type="radio" name="data-source" id="srcSensors" checked> Sensors</label>
-      <label><input type="radio" name="data-source" id="srcManual"> Manual</label>
-      <button type="button" id="toggleManualBtn" style="display:none">Show manual inputs</button>
+      <label class="tight"><input type="radio" name="data-source" id="srcSensors" checked> Sensors</label>
+      <label class="tight"><input type="radio" name="data-source" id="srcManual"> Manual</label>
+
+      <label class="tight" style="margin-left:10px">Farmer ID
+        <input type="number" id="farmer_id_input" placeholder="e.g. 12345">
+      </label>
+
+      <button type="button" id="loadCropsBtn" class="btn">Load My Crops</button>
+      <button type="button" id="openManualBtn" class="btn primary" style="display:none">Add Manual Process</button>
+
+      <span class="sm-hint">Tip: select <em>Manual</em> to add a process via popup, or click a crop card to view full history.</span>
     </section>
 
     <!-- Crop grid -->
-    <section id="cropGridSection" style="margin:18px 0">
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button type="button" id="loadCropsBtn">Load My Crops</button>
-        <span class="sm-hint">Uses your Farmer ID below to fetch crops & status.</span>
-      </div>
-      <div id="cropGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:12px"></div>
+    <section id="cropGridSection">
+      <div id="cropGrid"></div>
     </section>
 
-    <!-- Details modal -->
-    <div id="cropDetailModal">
-      <div>
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-          <h3 id="detailTitle" style="margin:0">Crop details</h3>
-          <button id="closeDetailBtn" aria-label="Close">✕</button>
+    <!-- CROP DETAILS MODAL -->
+    <div id="cropDetailModal" class="modal" aria-hidden="true">
+      <div class="box">
+        <div class="header">
+          <h3 id="detailTitle">Crop details</h3>
+          <div class="actions">
+            <button id="detailAddManualBtn" class="btn primary">Add Manual Process</button>
+            <button id="closeDetailBtn" class="close" aria-label="Close">✕</button>
+          </div>
         </div>
-        <div id="detailBody" style="margin-top:10px"></div>
+
+        <div id="detailBody" style="margin-top:12px">
+          <!-- status row -->
+          <div id="detailSnapshot" style="margin:6px 0 14px"></div>
+
+          <!-- current (latest) process -->
+          <div id="detailCurrent" style="margin:10px 0 16px"></div>
+
+          <!-- full history table -->
+          <h4 style="margin:.2rem 0 .6rem">Completed Processes</h4>
+          <table class="process-table">
+            <thead>
+              <tr>
+                <th>Date</th><th>Process</th>
+                <th>N</th><th>P</th><th>K</th>
+                <th>Temp</th><th>Humidity</th><th>pH</th><th>Rain</th>
+                <th>Suit.</th><th>Score</th>
+              </tr>
+            </thead>
+            <tbody id="detailProcessTableBody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
-    <form id="crop_process">
-      <h2>Crop Process</h2>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <label>Farmers ID
-          <input type="number" id="farmers_id" name="farmers_id" required>
-        </label>
-        <label>Crop (e.g. maize, rice, mungbean)
-          <input type="text" id="crop" name="crop" required>
-        </label>
-        <label>Process Type
-          <select id="process_type" name="process_type" required>
-            <option value="land_prep">Land Preparation</option>
-            <option value="planting">Planting</option>
-            <option value="irrigation">Irrigation</option>
-            <option value="weed_control">Weed Control</option>
-            <option value="pest_management">Pest Management</option>
-            <option value="fertilization">Fertilization</option>
-            <option value="harvest">Harvest</option>
-            <option value="soil_management">Soil Management</option>
-          </select>
-        </label>
-        <label>Process Date
-          <input type="date" id="process_date" name="process_date" required>
-        </label>
+    <!-- MANUAL INPUT MODAL -->
+    <div id="manualInputModal" class="modal" aria-hidden="true">
+      <div class="box">
+        <div class="header">
+          <h3 id="manualTitle">Add Manual Process</h3>
+          <button id="closeManualBtn" class="close" aria-label="Close">✕</button>
+        </div>
+
+        <form id="manualForm" style="margin-top:10px">
+          <div class="form-grid">
+            <label>Farmer ID
+              <input type="number" id="manual_farmers_id" name="farmers_id" required>
+            </label>
+            <label>Crop
+              <input type="text" id="manual_crop" name="crop" placeholder="e.g. maize" required>
+            </label>
+
+            <label>Process Type
+              <select id="manual_process_type" name="process_type" required>
+                <option value="land_prep">Land Preparation</option>
+                <option value="planting">Planting</option>
+                <option value="irrigation">Irrigation</option>
+                <option value="weed_control">Weed Control</option>
+                <option value="pest_management">Pest Management</option>
+                <option value="fertilization">Fertilization</option>
+                <option value="harvest">Harvest</option>
+                <option value="soil_management">Soil Management</option>
+              </select>
+            </label>
+            <label>Process Date
+              <input type="date" id="manual_process_date" name="process_date" required>
+            </label>
+
+            <!-- Weather autofill -->
+            <label style="grid-column:1/-1; display:flex; gap:10px; align-items:center">
+              <input id="manual_eval_city" type="text" placeholder="Town/City (auto weather)">
+              <button type="button" id="manualCityFetchBtn" class="btn">Use City Weather</button>
+              <span class="sm-hint">Auto-fills temperature & humidity; you can tweak manually.</span>
+            </label>
+
+            <!-- Readings -->
+            <label>Nitrogen (N) <input id="manual_N" type="number" step="1" placeholder="e.g. 90"></label>
+            <label>Phosphorus (P) <input id="manual_P" type="number" step="1" placeholder="e.g. 42"></label>
+            <label>Potassium (K) <input id="manual_K" type="number" step="1" placeholder="e.g. 43"></label>
+            <label>Soil pH <input id="manual_ph" type="number" step="0.1" placeholder="e.g. 6.5"></label>
+            <label>Temperature (°C) <input id="manual_temperature" type="number" step="0.1" placeholder="e.g. 21.0"></label>
+            <label>Humidity (%) <input id="manual_humidity" type="number" step="0.1" placeholder="e.g. 82"></label>
+            <label>Rainfall (mm) <input id="manual_rainfall" type="number" step="0.1" placeholder="e.g. 203"></label>
+
+            <!-- Optional SMS -->
+            <label style="grid-column:1/-1; display:flex; gap:8px; align-items:center">
+              <input type="checkbox" id="manual_smsAlert"> <span>SMS me if out of range</span>
+              <input id="manual_notify_phone" type="tel" placeholder="+2547XXXXXXXX" style="max-width:220px">
+            </label>
+          </div>
+
+          <div id="manualResult" style="margin-top:8px; white-space:pre-line"></div>
+
+          <div class="actions">
+            <button type="button" id="manualEvaluateSaveBtn" class="btn primary">Evaluate & Save</button>
+            <button type="submit" id="manualSaveOnlyBtn" class="btn">Save Process Only</button>
+          </div>
+        </form>
       </div>
+    </div>
 
-      <fieldset style="margin-top:16px">
-        <legend><strong>Current Conditions / Sensors (Manual)</strong></legend>
-
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-          <input id="eval_city" type="text" placeholder="Town/City (auto weather)">
-          <button type="button" id="evalCityFetchBtn" title="Fetch weather for this town">Use City Weather</button>
-          <span class="sm-hint">Tip: You can fill Temp/Humidity/Rainfall manually or auto-fill using town.</span>
-        </div>
-
-        <!-- Evaluation table (hidden until "Manual" + toggle) -->
-        <table class="process-table" id="evalTable" style="display:none; width:100%; margin-top:12px">
-          <thead>
-            <tr>
-              <th class="tight">Parameter</th>
-              <th>Current</th>
-              <th>Recommended Range</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Nitrogen (N)</td>
-              <td><input id="N" type="number" step="1" placeholder="e.g. 90"></td>
-              <td><span id="rec_N">—</span></td>
-              <td><span id="status_N">—</span></td>
-            </tr>
-            <tr>
-              <td>Phosphorus (P)</td>
-              <td><input id="P" type="number" step="1" placeholder="e.g. 42"></td>
-              <td><span id="rec_P">—</span></td>
-              <td><span id="status_P">—</span></td>
-            </tr>
-            <tr>
-              <td>Potassium (K)</td>
-              <td><input id="K" type="number" step="1" placeholder="e.g. 43"></td>
-              <td><span id="rec_K">—</span></td>
-              <td><span id="status_K">—</span></td>
-            </tr>
-            <tr>
-              <td>Soil pH</td>
-              <td><input id="ph" type="number" step="0.1" placeholder="e.g. 6.5"></td>
-              <td><span id="rec_ph">—</span></td>
-              <td><span id="status_ph">—</span></td>
-            </tr>
-            <tr>
-              <td>Temperature (°C)</td>
-              <td><input id="temperature" type="number" step="0.1" placeholder="e.g. 21.0"></td>
-              <td><span id="rec_temperature">—</span></td>
-              <td><span id="status_temperature">—</span></td>
-            </tr>
-            <tr>
-              <td>Humidity (%)</td>
-              <td><input id="humidity" type="number" step="0.1" placeholder="e.g. 82"></td>
-              <td><span id="rec_humidity">—</span></td>
-              <td><span id="status_humidity">—</span></td>
-            </tr>
-            <tr>
-              <td>Rainfall (mm)</td>
-              <td><input id="rainfall" type="number" step="0.1" placeholder="e.g. 203"></td>
-              <td><span id="rec_rainfall">—</span></td>
-              <td><span id="status_rainfall">—</span></td>
-            </tr>
-          </tbody>
-        </table>
-
-        <div class="eval-actions">
-          <label class="tight"><input type="checkbox" id="smsAlert"> SMS me if out of range</label>
-          <input id="notify_phone" type="tel" placeholder="+2547XXXXXXXX">
-        </div>
-
-        <div class="eval-actions">
-          <button type="button" id="evalBtn">Evaluate & Save</button>
-          <button type="submit">Save Process Only</button>
-        </div>
-      </fieldset>
-    </form>
-
-    <!-- Results card -->
-    <section class="recommendation-container" id="evalResultCard" style="display:none;text-align:center">
-      <h2>Evaluation Result</h2>
-      <div id="processMlResult" style="font-weight:800;color:#0a0a0a;white-space:pre-line"></div>
-      <ul id="processWarnings" style="margin-top:10px;display:none"></ul>
-    </section>
-
-    <section id="completed_processes_section" style="margin-top:20px">
-      <h2>Completed Processes for Farmer ID: <span id="farmer-id-display">N/A</span></h2>
-      <table class="process-table" id="completed_processes_table">
-        <thead><tr><th>Crop</th><th>Process Type</th><th>Process Date</th></tr></thead>
-        <tbody></tbody>
-      </table>
-      <button class="show-process-btn" id="showProcessBtn" style="margin-top:10px">Show Processes</button>
-    </section>
-
-    <div class="Help"><h3>For any complaints call us on 0123456754</h3></div>
+    <div class="Help eval-card" style="margin-top:16px"><h3>For any complaints call us on 0123456754</h3></div>
   </main>
 
   <script defer src="/script.js"></script>
