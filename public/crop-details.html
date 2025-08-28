@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Crop Details</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/stylesheet.css" />
+  <style>
+    :root { --gap: 16px; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#fafafa; color:#0a0a0a; }
+    header, .wrap { max-width: 1100px; margin: 0 auto; padding: 12px var(--gap); }
+
+    header a { margin-right: 10px; }
+    h1 { margin: 8px 0 0; font-size: 1.35rem; }
+
+    /* Layout: aside + main */
+    .wrap { display: grid; grid-template-columns: 320px 1fr; gap: var(--gap); align-items: start; }
+    @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } }
+
+    aside, main { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px; }
+
+    .badge { display:inline-block; padding:.2rem .5rem; border-radius:.5rem; font-weight:700; font-size:.85rem; }
+    .badge-ok { background:#e9f7ef; color:#1e5631; }
+    .badge-low, .badge-high { background:#fdecea; color:#b00020; }
+
+    .meta { color:#4b5563; font-size:.95rem; }
+    .label { font-weight:700; }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead th { text-align: left; font-size: .9rem; color:#374151; background:#f8fafc; }
+    th, td { border-bottom: 1px solid #eef2f7; padding: 8px 10px; }
+    tbody tr:hover { background:#fafafa; }
+
+    .row { display:flex; gap:8px; flex-wrap:wrap; margin:.35rem 0; }
+    .pill { border:1px solid #e5e7eb; padding:.15rem .4rem; border-radius:.4rem; font-size:.8rem; }
+
+    .toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-bottom:8px; }
+    .toolbar .left { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .toolbar .right a { text-decoration:none; border:1px solid #e5e7eb; padding:.45rem .7rem; border-radius:.5rem; background:#fff; }
+    .toolbar .right a:hover { background:#f6f7f9; }
+
+    .empty { color:#6b7280; padding:12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="/home">Home</a>
+      <a href="/Evaluation.html">Farming Evaluation</a>
+    </nav>
+    <h1 id="pageTitle">Crop • —</h1>
+  </header>
+
+  <div class="wrap">
+    <!-- Snapshot / Aside -->
+    <aside>
+      <div class="toolbar">
+        <div class="left">
+          <span class="pill" id="farmerPill">Farmer: —</span>
+          <span class="pill" id="cropPill">Crop: —</span>
+        </div>
+        <div class="right">
+          <a id="backLink" href="/Evaluation.html">← Back</a>
+        </div>
+      </div>
+
+      <section>
+        <div class="label">Status</div>
+        <div id="statusBadge" style="margin:.4rem 0"><span class="badge">No data</span></div>
+      </section>
+
+      <section style="margin-top:14px">
+        <div class="label">Current Process</div>
+        <div id="currentProcess" class="meta" style="margin-top:.35rem">
+          <div>Date: — • Type: —</div>
+          <div>Suitability: — • Score: —</div>
+        </div>
+      </section>
+
+      <section style="margin-top:14px">
+        <div class="label">Latest Readings</div>
+        <div id="latestReadings" class="row">
+          <!-- Pills filled by JS: N, P, K, Temp, Humidity, pH, Rain -->
+        </div>
+      </section>
+    </aside>
+
+    <!-- Completed Processes -->
+    <main>
+      <div class="label" style="margin-bottom:8px">Completed Processes</div>
+      <div class="meta" id="subtitle" style="margin-bottom:10px">All recorded processes for this crop.</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th><th>Process</th>
+            <th>N</th><th>P</th><th>K</th>
+            <th>Temp</th><th>Humidity</th><th>pH</th><th>Rain</th>
+            <th>Suitable</th><th>Score</th>
+          </tr>
+        </thead>
+        <tbody id="historyTbody">
+          <tr><td colspan="11" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </main>
+  </div>
+
+  <script>
+    // ---- minimal shared helpers (no external script needed) ----
+    const $ = (id) => document.getElementById(id);
+    const apiBase = (window.location.hostname.includes('localhost')) ? 'http://localhost:3000' : window.location.origin;
+    const safeJson = async (res) => { try { return await res.json(); } catch { return {}; } };
+    const safeFetch = async (url, opts={}) => {
+      const res = await fetch(url, opts);
+      const data = await safeJson(res);
+      if (!res.ok) throw new Error(data?.message || data?.error || `Request failed (${res.status})`);
+      return data;
+    };
+    const toISO = (d) => {
+      try { const dt = new Date(d); return Number.isNaN(dt.getTime()) ? '-' : dt.toISOString().slice(0,10); }
+      catch { return '-'; }
+    };
+    const normNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+
+    // Generic recommended ranges
+    const REC = {
+      N: {min:80,max:120}, P:{min:40,max:60}, K:{min:40,max:60},
+      ph:{min:6.0,max:7.0}, temperature:{min:18,max:30},
+      humidity:{min:50,max:80}, rainfall:{min:50,max:250}
+    };
+    const statusOf = (key, val) => {
+      if (val == null) return {cls:'badge', label:'No data'};
+      const r = REC[key]; if (!r) return {cls:'badge', label:String(val)};
+      if (val < r.min) return {cls:'badge badge-low', label:`Low ${key}`};
+      if (val > r.max) return {cls:'badge badge-high', label:`High ${key}`};
+      return {cls:'badge badge-ok', label:`Good ${key}`};
+    };
+    const summarize = (sample) => {
+      const keys = ['N','P','K','temperature','humidity','rainfall','ph'];
+      for (const k of keys) {
+        const s = statusOf(k, normNum(sample?.[k]));
+        if (s.cls.includes('low') || s.cls.includes('high')) return s;
+      }
+      for (const k of keys) {
+        const s = statusOf(k, normNum(sample?.[k]));
+        if (s.cls.includes('ok')) return s;
+      }
+      return {cls:'badge', label:'No data'};
+    };
+    const latestFirst = (a, b) =>
+      (new Date(b.process_date).getTime()||0) - (new Date(a.process_date).getTime()||0);
+
+    function pickLatestReading(rows) {
+      const sorted = [...rows].sort(latestFirst);
+      for (const r of sorted) {
+        if (['N','P','K','temperature','humidity','ph','rainfall'].some(k => normNum(r[k])!=null)) return r;
+      }
+      return sorted[0] || null;
+    }
+
+    function pill(label, cls='pill') { return `<span class="${cls}">${label}</span>`; }
+
+    async function main() {
+      const params = new URLSearchParams(window.location.search);
+      const farmerId = params.get('farmer_id');
+      const crop = (params.get('crop')||'').toLowerCase().trim();
+
+      // UI titles
+      $('pageTitle').textContent = `Crop • ${crop || '—'}`;
+      $('farmerPill').textContent = `Farmer: ${farmerId || '—'}`;
+      $('cropPill').textContent = `Crop: ${crop || '—'}`;
+
+      if (!farmerId || !crop) {
+        $('historyTbody').innerHTML = `<tr><td colspan="11" class="empty">Missing farmer_id or crop in URL.</td></tr>`;
+        return;
+      }
+
+      // Fetch all processes for farmer
+      let processes = [];
+      try {
+        const data = await safeFetch(`${apiBase}/api/get-processes?farmers_id=${encodeURIComponent(farmerId)}`);
+        processes = data?.processes || [];
+      } catch (e) {
+        $('historyTbody').innerHTML = `<tr><td colspan="11" class="empty">Failed to load processes: ${e.message}</td></tr>`;
+        return;
+      }
+
+      // Filter for this crop
+      const rows = processes.filter(r => (r.crop||'').toLowerCase().trim() === crop);
+      if (!rows.length) {
+        $('historyTbody').innerHTML = `<tr><td colspan="11" class="empty">No processes found for this crop.</td></tr>`;
+      }
+
+      // Snapshot status
+      const latest = pickLatestReading(rows) || {};
+      const hi = summarize(latest);
+      $('statusBadge').innerHTML = `<span class="${hi.cls}">${hi.label}</span>`;
+
+      // Current process = most recent
+      const cur = [...rows].sort(latestFirst)[0];
+      if (cur) {
+        const score = (cur.suitability_score != null) ? `${Math.round(cur.suitability_score * 100)}%` : '–';
+        const suit  = (cur.suitable == null) ? '–' : (cur.suitable ? 'Suitable' : 'Not suitable');
+        $('currentProcess').innerHTML = `
+          <div>Date: ${toISO(cur.process_date)} • Type: ${cur.process_type || '–'}</div>
+          <div>Suitability: ${suit} • Score: ${score}</div>
+          ${cur.advice ? `<div class="meta">Advice: ${cur.advice}</div>` : ''}
+        `;
+      } else {
+        $('currentProcess').innerHTML = `<div>Date: – • Type: –</div><div>Suitability: – • Score: –</div>`;
+      }
+
+      // Latest reading pills
+      $('latestReadings').innerHTML = `
+        ${pill('N: ' + (latest.N ?? '–'))}
+        ${pill('P: ' + (latest.P ?? '–'))}
+        ${pill('K: ' + (latest.K ?? '–'))}
+        ${pill('Temp: ' + (latest.temperature ?? '–'))}
+        ${pill('Humidity: ' + (latest.humidity ?? '–'))}
+        ${pill('pH: ' + (latest.ph ?? '–'))}
+        ${pill('Rain: ' + (latest.rainfall ?? '–'))}
+      `;
+
+      // Table body (ALL processes)
+      $('historyTbody').innerHTML = rows.sort(latestFirst).map(r => `
+        <tr>
+          <td>${toISO(r.process_date)}</td>
+          <td>${r.process_type || ''}</td>
+          <td>${r.N ?? ''}</td><td>${r.P ?? ''}</td><td>${r.K ?? ''}</td>
+          <td>${r.temperature ?? ''}</td><td>${r.humidity ?? ''}</td><td>${r.ph ?? ''}</td><td>${r.rainfall ?? ''}</td>
+          <td>${r.suitable == null ? '' : (r.suitable ? 'Yes' : 'No')}</td>
+          <td>${r.suitability_score == null ? '' : (Math.round(r.suitability_score * 100) + '%')}</td>
+        </tr>
+      `).join('') || `<tr><td colspan="11" class="empty">No history.</td></tr>`;
+    }
+
+    main();
+  </script>
+</body>
+</html>

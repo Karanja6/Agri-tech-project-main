@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html> 
 <html lang="en">
 <head>
   <link rel="stylesheet" href="/stylesheet.css">
@@ -78,7 +78,7 @@
       <button type="button" id="loadCropsBtn" class="btn">Load My Crops</button>
       <button type="button" id="openManualBtn" class="btn primary" style="display:none">Add Manual Process</button>
 
-      <span class="sm-hint">Tip: select <em>Manual</em> to add a process via popup, or click a crop card to view full history.</span>
+      <span class="sm-hint">Tip: click a crop card to view <em>this season</em> in a popup, or open the full page for complete history.</span>
     </section>
 
     <!-- Crop grid -->
@@ -92,20 +92,17 @@
         <div class="header">
           <h3 id="detailTitle">Crop details</h3>
           <div class="actions">
+            <button id="detailShowAllBtn" class="btn">Show Full Processes</button>
             <button id="detailAddManualBtn" class="btn primary">Add Manual Process</button>
             <button id="closeDetailBtn" class="close" aria-label="Close">✕</button>
           </div>
         </div>
 
         <div id="detailBody" style="margin-top:12px">
-          <!-- status row -->
           <div id="detailSnapshot" style="margin:6px 0 14px"></div>
-
-          <!-- current (latest) process -->
           <div id="detailCurrent" style="margin:10px 0 16px"></div>
 
-          <!-- full history table -->
-          <h4 style="margin:.2rem 0 .6rem">Completed Processes</h4>
+          <h4 style="margin:.2rem 0 .6rem">Completed Processes — <em>This Season</em></h4>
           <table class="process-table">
             <thead>
               <tr>
