@@ -15,6 +15,17 @@
     .eval-actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
     .sm-hint     { display:block; margin-top:6px; color:#3d3d3d; font-size:.95rem; }
     .tight { white-space:nowrap; }
+
+    /* New: cards/badges/grid/modal */
+    .badge { display:inline-block; padding:.15rem .4rem; border-radius:.4rem; font-size:.8rem; font-weight:700 }
+    .badge-ok { background:#e9f7ef; color:#1e5631 }
+    .badge-low, .badge-high { background:#fdecea; color:#b00020 }
+    .card { border:1px solid #e5e7eb; border-radius:8px; padding:12px; cursor:pointer; background:#fff }
+    .card:hover { box-shadow:0 2px 10px rgba(0,0,0,.06) }
+    .card h4 { margin:.2rem 0 .35rem }
+    .meta { color:#555; font-size:.9rem }
+    #cropDetailModal { position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; padding:16px }
+    #cropDetailModal > div { background:#fff; max-width:780px; width:100%; border-radius:8px; padding:16px; max-height:85vh; overflow:auto }
   </style>
 </head>
 <body>
@@ -30,6 +41,34 @@
   <header class="eval-card"><h1>Farmers Evaluation</h1></header>
 
   <main class="eval-card">
+    <!-- Data source toggle -->
+    <section style="display:flex;gap:16px;align-items:center;margin:12px 0">
+      <strong>Data source:</strong>
+      <label><input type="radio" name="data-source" id="srcSensors" checked> Sensors</label>
+      <label><input type="radio" name="data-source" id="srcManual"> Manual</label>
+      <button type="button" id="toggleManualBtn" style="display:none">Show manual inputs</button>
+    </section>
+
+    <!-- Crop grid -->
+    <section id="cropGridSection" style="margin:18px 0">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button type="button" id="loadCropsBtn">Load My Crops</button>
+        <span class="sm-hint">Uses your Farmer ID below to fetch crops & status.</span>
+      </div>
+      <div id="cropGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:12px"></div>
+    </section>
+
+    <!-- Details modal -->
+    <div id="cropDetailModal">
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <h3 id="detailTitle" style="margin:0">Crop details</h3>
+          <button id="closeDetailBtn" aria-label="Close">✕</button>
+        </div>
+        <div id="detailBody" style="margin-top:10px"></div>
+      </div>
+    </div>
+
     <form id="crop_process">
       <h2>Crop Process</h2>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -65,8 +104,8 @@
           <span class="sm-hint">Tip: You can fill Temp/Humidity/Rainfall manually or auto-fill using town.</span>
         </div>
 
-        <!-- Evaluation table -->
-        <table class="process-table" id="evalTable" style="display:table; width:100%; margin-top:12px">
+        <!-- Evaluation table (hidden until "Manual" + toggle) -->
+        <table class="process-table" id="evalTable" style="display:none; width:100%; margin-top:12px">
           <thead>
             <tr>
               <th class="tight">Parameter</th>

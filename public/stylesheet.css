@@ -439,5 +439,10 @@ section, .form-container, .weather-container, .recommendation-container {
     html {
         scroll-behavior: smooth;
     }
-    
-    
+.badge { display:inline-block;padding:.15rem .4rem;border-radius:.4rem;font-size:.8rem;font-weight:700 }
+.badge-ok { background:#e9f7ef;color:#1e5631 }
+.badge-low, .badge-high { background:#fdecea;color:#b00020 } /* red-ish */
+.card { border:1px solid #e5e7eb;border-radius:8px;padding:12px;cursor:pointer; background:#fff }
+.card:hover { box-shadow:0 2px 10px rgba(0,0,0,.06) }
+.card h4 { margin:.2rem 0 .35rem }
+.meta { color:#555;font-size:.9rem }

@@ -423,21 +423,37 @@ app.post('/api/ml-recommend', async (req, res) => {
 });
 
 // === Simple process save (no ML) ===
+// === Simple process save (now supports readings + ML fields) ===
 app.post('/api/Evaluation', async (req, res) => {
   if (!ensureDBReady(res)) return;
   try {
-    const { farmers_id, crop, process_type, process_date } = req.body || {};
+    const {
+      farmers_id, crop, process_type, process_date,
+      // optional readings
+      N, P, K, temperature, humidity, ph, rainfall,
+      // optional ML outputs
+      stage, suitable, suitability_score, flags, advice
+    } = req.body || {};
+
     if (!farmers_id || !crop || !process_type || !process_date) {
       return res.status(400).json({ message: 'farmers_id, crop, process_type, process_date are required' });
     }
-    const saved = await CropProcess.create({ farmers_id, crop, process_type, process_date });
+
+    const saved = await CropProcess.create({
+      farmers_id, crop, process_type, process_date,
+      // readings (nullable)
+      N, P, K, temperature, humidity, ph, rainfall,
+      // ML outputs (nullable)
+      stage, suitable, suitability_score,
+      flags, advice
+    });
+
     return res.json({ ok: true, process_id: saved.process_id });
   } catch (e) {
     console.error('Evaluation save error:', e);
     return res.status(500).json({ message: 'Error saving process' });
   }
 });
-
 /* =========================
    Image upload (disease detection)
    ========================= */
