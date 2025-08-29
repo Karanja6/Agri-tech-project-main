@@ -7,14 +7,28 @@ const Sequelize = require('sequelize');
 const { DataTypes } = require('sequelize');
 const cors      = require('cors');
 const session   = require('express-session');
-const path      = require('path'); // must be before multer uses it
+const path      = require('path');
 const multer    = require('multer');
 const upload    = multer({ dest: path.join(__dirname, 'uploads') });
 const axios     = require('axios');
 const { spawn } = require('child_process');
+const africastalking = require('africastalking');
 
 const PORT = process.env.PORT || 3000;
 const app  = express();
+
+/* =========================
+   Africa's Talking (SMS + Voice)
+   ========================= */
+const AT = africastalking({
+  apiKey: process.env.AT_API_KEY || 'YOUR_API_KEY',
+  username: process.env.AT_USERNAME || 'sandbox',
+});
+const smsApi   = AT.SMS;
+const voiceApi = AT.VOICE; // used for outbound calls if needed
+
+const AT_SENDER_ID = process.env.AT_SENDER_ID || undefined; // optional Alphanumeric/ShortCode
+const VOICE_NUMBER = process.env.VOICE_NUMBER || undefined; // your AT voice number for outbound (optional)
 
 /* =========================
    USSD + API helper config
@@ -22,17 +36,16 @@ const app  = express();
 const rawBase  = process.env.API_BASE || `http://localhost:${PORT}`;
 const API_BASE = rawBase.endsWith('/') ? rawBase.slice(0, -1) : rawBase;
 
-app.set('trust proxy', 1); // Render / proxies
+app.set('trust proxy', 1);
 
 // JSON for normal APIs
 app.use(express.json());
 
-// x-www-form-urlencoded ONLY for the USSD route (most gateways post like this)
+// x-www-form-urlencoded ONLY for the USSD & Voice routes
 app.use('/ussd', express.urlencoded({ extended: false }));
+app.use('/voice', express.urlencoded({ extended: false }));
 
 // ------------ CORS ------------
-// If frontend is same-origin (served by this server on Render), CORS won’t be used.
-// If you host UI elsewhere, add that origin here and keep credentials:true.
 app.use(cors({
   origin: [
     'http://localhost:3000',
@@ -42,22 +55,22 @@ app.use(cors({
   credentials: true
 }));
 
-// Static files (optional site)
+// Static files
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Sessions (used by web login; USSD doesn’t need cookies)
+// Sessions (web login)
 app.use(session({
   secret: process.env.SESSION_SECRET || 'randomsetofcharacters',
   resave: false,
   saveUninitialized: true,
   cookie: {
-    secure: process.env.NODE_ENV === 'production',                   // true on HTTPS
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax' // allow cross-site in prod
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
   }
 }));
 
 function ussdReply(res, type, message) {
-  res.set('Content-Type', 'text/plain');
+  res.set('Content-Type', 'text/plain'); // AT expects text
   return res.send(`${type} ${message}`);
 }
 
@@ -109,7 +122,7 @@ function fmtDate(d) {
 }
 
 /* ================
-//  Database init
+   Database init
    ================ */
 let sequelizeWithDB;
 let User, CropProcess, Feedback;
@@ -118,7 +131,7 @@ function defineModels(sequelize) {
   const User = sequelize.define('User', {
     farmers_id: { type: DataTypes.INTEGER, primaryKey: true, allowNull: false, unique: true },
     fullname:   { type: DataTypes.STRING,  allowNull: false },
-    contact:    { type: DataTypes.STRING,  allowNull: false }, // keep as string for leading zeros/+ and country codes
+    contact:    { type: DataTypes.STRING,  allowNull: false },
     land_size:  { type: DataTypes.FLOAT,   allowNull: false },
     soil_type:  { type: DataTypes.STRING,  allowNull: false },
     password:   { type: DataTypes.STRING,  allowNull: false },
@@ -128,7 +141,7 @@ function defineModels(sequelize) {
     process_id:   { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true, allowNull: false },
     farmers_id:   { type: DataTypes.INTEGER, allowNull: false, references: { model: 'Users', key: 'farmers_id' } },
     crop:         { type: DataTypes.STRING,  allowNull: false },
-    process_type: { type: DataTypes.STRING,  allowNull: false }, // e.g. planting/harvest/etc.
+    process_type: { type: DataTypes.STRING,  allowNull: false },
     process_date: { type: DataTypes.DATE,    allowNull: false },
 
     // Optional readings
@@ -174,7 +187,6 @@ async function initializeDatabase() {
         port: process.env.DB_PORT || 5432,
         dialect: process.env.DB_DIALECT || 'postgres',
         logging: false,
-        // Render Postgres typically requires SSL
         dialectOptions: (process.env.NODE_ENV === 'production' || process.env.DB_SSL === 'true')
           ? { ssl: { require: true, rejectUnauthorized: false } }
           : {}
@@ -182,8 +194,7 @@ async function initializeDatabase() {
     );
 
     await sequelizeWithDB.authenticate();
-    console.log('✅ Connected to PostgreSQL (ssl:',
-      (process.env.NODE_ENV === 'production' || process.env.DB_SSL === 'true'), ')');
+    console.log('✅ Connected to PostgreSQL');
 
     ({ User, CropProcess, Feedback } = defineModels(sequelizeWithDB));
     await sequelizeWithDB.sync({ alter: true });
@@ -194,7 +205,6 @@ async function initializeDatabase() {
 }
 initializeDatabase();
 
-// Guard so routes fail clearly if DB isn’t ready
 function ensureDBReady(res) {
   if (!User || !CropProcess || !Feedback) {
     res.status(503).json({ message: 'Database not initialized yet. Please try again shortly.' });
@@ -206,20 +216,20 @@ function ensureDBReady(res) {
 /* ======
    Routes
    ====== */
-
-// Simple health check for your USSD provider to ping
+// Health
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
+// Web
 app.get('/', (req, res) => {
   if (req.session.farmers_id) return res.redirect('/home');
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
-
 app.get('/home', (req, res) => {
   if (!req.session.farmers_id) return res.redirect('/');
   res.sendFile(path.join(__dirname, 'public', 'home.html'));
 });
 
+// Register
 app.post('/api/register', async (req, res) => {
   if (!ensureDBReady(res)) return;
   const { farmers_id, fullName, contact, land_size, soil_type, password, confirmPassword } = req.body;
@@ -249,6 +259,7 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
+// Login
 app.post('/api/login', async (req, res) => {
   if (!ensureDBReady(res)) return;
   const { farmers_id, password } = req.body;
@@ -267,7 +278,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// === Stage-aware process evaluation ===
+// Stage-aware process evaluation (Python)
 app.post('/api/process-eval', async (req, res) => {
   const { crop, stage, N, P, K, temperature, humidity, ph, rainfall } = req.body || {};
   const required = [crop, stage, N, P, K, temperature, humidity, ph, rainfall];
@@ -292,6 +303,7 @@ app.post('/api/process-eval', async (req, res) => {
   });
 });
 
+// Feedback
 app.post('/api/feedback', async (req, res) => {
   if (!ensureDBReady(res)) return;
   try {
@@ -309,6 +321,7 @@ app.post('/api/feedback', async (req, res) => {
   }
 });
 
+// Processes
 app.get('/api/get-processes', async (req, res) => {
   if (!ensureDBReady(res)) return;
   const { farmers_id } = req.query;
@@ -325,7 +338,7 @@ app.get('/api/get-processes', async (req, res) => {
   }
 });
 
-// AI chat endpoints
+// AI chat endpoints (DeepInfra)
 app.post('/api/chat', async (req, res) => {
   const { message } = req.body;
   if (!message) return res.status(400).json({ error: 'Message is required' });
@@ -377,7 +390,7 @@ Format: {"disease": "...", "remedies": ["..."]}`;
   }
 });
 
-// GET /api/weather?city=Nairobi
+// Weather
 app.get('/api/weather', async (req, res) => {
   const city = (req.query.city || '').trim();
   if (!city) return res.status(400).json({ message: 'city is required' });
@@ -387,8 +400,6 @@ app.get('/api/weather', async (req, res) => {
     const { data } = await axios.get(url, {
       params: { q: city, appid: process.env.OPENWEATHER_KEY, units: 'metric' }
     });
-
-    // Return only what the frontend needs
     return res.json({ main: data.main, wind: data.wind, clouds: data.clouds });
   } catch (e) {
     const status  = e?.response?.status || 500;
@@ -397,7 +408,7 @@ app.get('/api/weather', async (req, res) => {
   }
 });
 
-// === ML recommend endpoint ===
+// ML recommend endpoint
 app.post('/api/ml-recommend', async (req, res) => {
   const { N, P, K, temperature, humidity, ph, rainfall } = req.body || {};
   const nums = [N, P, K, temperature, humidity, ph, rainfall];
@@ -422,16 +433,13 @@ app.post('/api/ml-recommend', async (req, res) => {
   });
 });
 
-// === Simple process save (no ML) ===
-// === Simple process save (now supports readings + ML fields) ===
+// Simple process save
 app.post('/api/Evaluation', async (req, res) => {
   if (!ensureDBReady(res)) return;
   try {
     const {
       farmers_id, crop, process_type, process_date,
-      // optional readings
       N, P, K, temperature, humidity, ph, rainfall,
-      // optional ML outputs
       stage, suitable, suitability_score, flags, advice
     } = req.body || {};
 
@@ -441,11 +449,8 @@ app.post('/api/Evaluation', async (req, res) => {
 
     const saved = await CropProcess.create({
       farmers_id, crop, process_type, process_date,
-      // readings (nullable)
       N, P, K, temperature, humidity, ph, rainfall,
-      // ML outputs (nullable)
-      stage, suitable, suitability_score,
-      flags, advice
+      stage, suitable, suitability_score, flags, advice
     });
 
     return res.json({ ok: true, process_id: saved.process_id });
@@ -454,17 +459,16 @@ app.post('/api/Evaluation', async (req, res) => {
     return res.status(500).json({ message: 'Error saving process' });
   }
 });
+
 /* =========================
    Image upload (disease detection)
    ========================= */
-// POST /api/upload-image  (multipart/form-data; field name: cropImage)
 app.post('/api/upload-image', upload.single('cropImage'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: 'No image uploaded (field: cropImage)' });
 
     const imgPath = req.file.path;
 
-    // --- OPTIONAL: Call your Python model instead ---
     const pyCmd  = process.platform === 'win32' ? 'python' : 'python3';
     const pyPath = path.join(__dirname, 'ml', 'detect_disease.py'); // implement this script
     const py     = spawn(pyCmd, [pyPath, imgPath], { cwd: path.join(__dirname, 'ml') });
@@ -475,7 +479,7 @@ app.post('/api/upload-image', upload.single('cropImage'), async (req, res) => {
     py.on('close', code => {
       if (code !== 0) return res.status(500).json({ message: 'Image ML error', error: err || out });
       try {
-        const parsed = JSON.parse(out.trim()); // expect {"disease":"..","remedies":["..",".."]}
+        const parsed = JSON.parse(out.trim());
         if (!parsed?.disease || !Array.isArray(parsed?.remedies)) {
           return res.status(500).json({ message: 'Bad ML output shape', raw: parsed });
         }
@@ -491,10 +495,9 @@ app.post('/api/upload-image', upload.single('cropImage'), async (req, res) => {
 });
 
 /* ======================
-   USSD (GET for testing, POST for provider)
+   USSD (Africa's Talking style)
    ====================== */
 app.all('/ussd', async (req, res) => {
-  // Helpful debug (remove or reduce in production)
   console.log('[USSD HIT]', {
     method: req.method,
     body: req.body,
@@ -515,7 +518,6 @@ app.all('/ussd', async (req, res) => {
   if (!parts.length) return ussdReply(res, 'CON', rootUssdMenu());
 
   try {
-    // 1) Login -> 1*FARMER_ID*PASSWORD
     if (first === '1') {
       if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
       if (parts.length === 2) return ussdReply(res, 'CON', 'Enter Password:');
@@ -529,7 +531,6 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // 2) Register -> 2*FARMER_ID*FULL_NAME*CONTACT*LAND_SIZE*SOIL*PASSWORD
     if (first === '2') {
       const prompts = [
         'Enter Farmer ID:',
@@ -551,7 +552,6 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // 3) Weather + ML → 3*CITY*TEMP*HUMID*N*P*K*pH*RAINFALL
     if (first === '3') {
       const prompts = [
         'Enter City/Town:',
@@ -580,7 +580,6 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // 4) Record Crop Process -> 4*FARMER_ID*CROP*PROCESS_TYPE*DATE
     if (first === '4') {
       const prompts = [
         'Enter Farmer ID:',
@@ -599,7 +598,6 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // 5) View My Processes -> 5*FARMER_ID
     if (first === '5') {
       if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
       const farmers_id = parts[1];
@@ -614,7 +612,6 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // 6) Quick Disease Advice -> 6*symptoms text...
     if (first === '6') {
       if (parts.length === 1) return ussdReply(res, 'CON', 'Describe crop symptoms (short):');
       const symptoms = parts.slice(1).join(' ');
@@ -627,7 +624,6 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // 7) Feedback -> 7*FARMER_ID*your feedback (we store boolean only)
     if (first === '7') {
       if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
       if (parts.length === 2) return ussdReply(res, 'CON', 'Share your feedback (short):');
@@ -640,7 +636,6 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // 8) Expert Profiles (static)
     if (first === '8') {
       const experts = [
         'Agro Hotline: 0700 000 000',
@@ -650,7 +645,6 @@ app.all('/ussd', async (req, res) => {
       return ussdReply(res, 'END', experts);
     }
 
-    // 9) Process Suitability Check -> 9*CROP*PROCESS_TYPE*N*P*K*TEMP*HUMID*PH*RAINFALL
     if (first === '9') {
       const prompts = [
         'Crop (e.g., maize):',
@@ -703,11 +697,239 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // Fallback to root menu
     return ussdReply(res, 'CON', rootUssdMenu());
   } catch (err) {
     console.error('USSD error:', err);
     return ussdReply(res, 'END', 'An error occurred. Try again later.');
+  }
+});
+
+/* ======================
+   SMS: /send-alert (used by frontend)
+   ====================== */
+app.post('/send-alert', async (req, res) => {
+  try {
+    const { phoneNumber, message } = req.body || {};
+    if (!phoneNumber || !message) {
+      return res.status(400).json({ message: 'phoneNumber and message are required' });
+    }
+
+    const payload = {
+      to: [phoneNumber],
+      message,
+      ...(AT_SENDER_ID ? { from: AT_SENDER_ID } : {})
+    };
+
+    const response = await smsApi.send(payload);
+    res.json({ success: true, response });
+  } catch (err) {
+    console.error('SMS error:', err?.response?.data || err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/* ======================
+   Voice (IVR) — Africa’s Talking
+   ====================== */
+// Helpers to respond with XML
+function voiceXml(res, xml) {
+  res.set('Content-Type', 'application/xml');
+  return res.send(xml);
+}
+function say(text) {
+  return `<Say>${text}</Say>`;
+}
+function getDigits({ prompt, timeout = 7, numDigits = 1, callbackUrl = '/voice/menu' }) {
+  return `
+    <GetDigits timeout="${timeout}" numDigits="${numDigits}" callbackUrl="${API_BASE}${callbackUrl}">
+      <Say>${prompt}</Say>
+    </GetDigits>
+  `;
+}
+
+// Inbound call entry (set this URL in AT Voice Callback URL)
+app.post('/voice/incoming', (req, res) => {
+  const { isActive } = req.body;
+  if (String(isActive) !== '1') {
+    return voiceXml(res, '<Response></Response>');
+  }
+
+  const menu = [
+    'Welcome to SmartFarm.',
+    'Press 1 for today’s weather and advice.',
+    'Press 2 to hear your last recorded process.',
+    'Press 3 to talk to an expert.',
+  ].join(' ');
+
+  const xml = `
+    <Response>
+      ${getDigits({
+        prompt: menu,
+        numDigits: 1,
+        callbackUrl: '/voice/menu'
+      })}
+      ${say('No input received. Goodbye.')}
+      <Hangup/>
+    </Response>
+  `;
+  return voiceXml(res, xml);
+});
+
+// County code → weather
+app.post('/voice/weather-county', async (req, res) => {
+  const { dtmfDigits } = req.body || {};
+  let code = (dtmfDigits || '').trim();
+
+  // Strip leading zeros: 001 -> 1, 047 -> 47
+  code = code.replace(/^0+/, '');
+
+  const countyMap = {
+    '1':  'Mombasa',
+    '2':  'Kwale',
+    '3':  'Kilifi',
+    '4':  'Hola',
+    '5':  'Lamu',
+    '6':  'Voi',
+    '7':  'Garissa',
+    '8':  'Wajir',
+    '9':  'Mandera',
+    '10': 'Marsabit',
+    '11': 'Isiolo',
+    '12': 'Meru',
+    '13': 'Chuka',
+    '14': 'Embu',
+    '15': 'Kitui',
+    '16': 'Machakos',
+    '17': 'Wote',
+    '18': 'Ol Kalou',
+    '19': 'Nyeri',
+    '20': 'Kerugoya',
+    '21': 'Murang\'a',
+    '22': 'Kiambu',
+    '23': 'Lodwar',
+    '24': 'Kapenguria',
+    '25': 'Maralal',
+    '26': 'Kitale',
+    '27': 'Eldoret',
+    '28': 'Iten',
+    '29': 'Kapsabet',
+    '30': 'Kabarnet',
+    '31': 'Nanyuki',
+    '32': 'Nakuru',
+    '33': 'Narok',
+    '34': 'Kajiado',
+    '35': 'Kericho',
+    '36': 'Bomet',
+    '37': 'Kakamega',
+    '38': 'Vihiga',
+    '39': 'Bungoma',
+    '40': 'Busia',
+    '41': 'Siaya',
+    '42': 'Kisumu',
+    '43': 'Homa Bay',
+    '44': 'Migori',
+    '45': 'Kisii',
+    '46': 'Nyamira',
+    '47': 'Nairobi'
+  };
+
+  const city = countyMap[code];
+  if (!city) {
+    return voiceXml(res, `
+      <Response>
+        ${say('Sorry, county code not recognized. Goodbye.')}
+        <Hangup/>
+      </Response>
+    `);
+  }
+
+  try {
+    const data = await apiGet('/api/weather', { city });
+    const t = Math.round(data?.main?.temp);
+    const h = Math.round(data?.main?.humidity);
+
+    const msg = `Weather in ${city}. Temperature ${Number.isFinite(t) ? t : 'unknown'} degrees. Humidity ${Number.isFinite(h) ? h : 'unknown'} percent.`;
+    return voiceXml(res, `<Response>${say(msg)}<Hangup/></Response>`);
+  } catch (e) {
+    console.error('weather-county error:', e);
+    return voiceXml(res, `
+      <Response>
+        ${say('Unable to fetch weather now. Goodbye.')}
+        <Hangup/>
+      </Response>
+    `);
+  }
+});
+
+// Voice menu handler (AT will POST dtmfDigits here)
+app.post('/voice/menu', async (req, res) => {
+  const { dtmfDigits, callerNumber } = req.body || {};
+  const digit = (dtmfDigits || '').trim();
+
+  try {
+    if (digit === '1') {
+      // Ask for county code (3 digits, leading zeros allowed)
+      const prompt = 'Enter your county code, for example, 0 4 7 for Nairobi or 0 0 1 for Mombasa.';
+      const xml = `
+        <Response>
+          ${getDigits({ prompt, numDigits: 3, timeout: 7, callbackUrl: '/voice/weather-county' })}
+          ${say('No input received. Goodbye.')}
+          <Hangup/>
+        </Response>
+      `;
+      return voiceXml(res, xml);
+    }
+
+    if (digit === '2') {
+      // Read latest process for a demo farmer (map callerNumber -> farmers_id in your DB)
+      let message = 'No recent process found.';
+      try {
+        const farmers_id = 1; // TODO: map callerNumber to farmer
+        const data = await apiGet('/api/get-processes', { farmers_id });
+        const last = (data.processes || [])[0];
+        if (last) {
+          message = `Last process: ${last.crop}, ${last.process_type}, on ${fmtDate(last.process_date)}.`;
+        }
+      } catch (e) {
+        // fall through with default message
+      }
+      const xml = `
+        <Response>
+          ${say(message)}
+          <Hangup/>
+        </Response>
+      `;
+      return voiceXml(res, xml);
+    }
+
+    if (digit === '3') {
+      // Forward call to an expert number (must be a verified AT number)
+      const EXPERT = process.env.EXPERT_PHONE || '+254700000000';
+      const xml = `
+        <Response>
+          <Say>Connecting you to an expert.</Say>
+          <Dial phoneNumbers="${EXPERT}" />
+        </Response>
+      `;
+      return voiceXml(res, xml);
+    }
+
+    const xml = `
+      <Response>
+        ${say('Invalid choice. Goodbye.')}
+        <Hangup/>
+      </Response>
+    `;
+    return voiceXml(res, xml);
+  } catch (err) {
+    console.error('Voice menu error:', err);
+    const xml = `
+      <Response>
+        ${say('An error occurred. Please try again later.')}
+        <Hangup/>
+      </Response>
+    `;
+    return voiceXml(res, xml);
   }
 });
 

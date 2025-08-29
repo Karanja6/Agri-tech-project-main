@@ -1,5 +1,5 @@
 // public/script.js
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   // ---------------------------------
   // API base (no process.env)
   // ---------------------------------
@@ -31,6 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try { const dt = new Date(d); return Number.isNaN(dt.getTime()) ? '-' : dt.toISOString().slice(0,10); }
     catch { return '-'; }
   };
+  const normNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
 
   // ---------------------------------
   // AUTH: Login
@@ -102,6 +103,40 @@ document.addEventListener('DOMContentLoaded', () => {
     const el = $(id);
     if (el && !('value' in el)) el.textContent = text;
   }
+
+  // --- SMS Alert helper (runs after data changes) ---
+  async function checkAndSendAlert() {
+    const tempEl = $('manual_temperature');
+    const humidEl = $('manual_humidity');
+    const phoneEl = $('manual_notify_phone');
+    const toggleEl = $('manual_smsAlert');
+
+    if (!tempEl || !humidEl || !phoneEl || !toggleEl) return; // not on this page
+
+    const temp = Number.parseFloat(tempEl.value);
+    const humidity = Number.parseFloat(humidEl.value);
+    const phone = phoneEl.value?.trim();
+    const wantsAlert = !!toggleEl.checked;
+
+    if (!wantsAlert || !phone || !Number.isFinite(temp) || !Number.isFinite(humidity)) return;
+
+    const isExtreme = temp < 10 || temp > 35 || humidity < 20 || humidity > 90;
+    if (!isExtreme) return;
+
+    const message = `Warning: Extreme weather detected! Temp: ${temp}°C, Humidity: ${humidity}%. Take precautions.`;
+
+    try {
+      await safeFetch(`${API_BASE}/send-alert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber: phone, message })
+      });
+      console.log('SMS alert sent');
+    } catch (err) {
+      console.error('SMS alert failed:', err);
+    }
+  }
+
   function applyWeatherToUI(data) {
     if (!data) return;
     const t = data?.main?.temp;
@@ -118,15 +153,19 @@ document.addEventListener('DOMContentLoaded', () => {
     fillIfInput('temperature', t);
     fillIfInput('humidity', h);
 
-    // Optional text labels (if you have them)
+    // Optional text labels
     if (t != null) setIfText('temperatureText', `Temperature: ${t} °C`);
     if (wind != null) setIfText('wind', `Wind Speed: ${wind} m/s`);
     if (clouds != null) setIfText('clouds', `Cloud Coverage: ${clouds} %`);
     if (pressure != null) setIfText('pressure', `Pressure: ${pressure} hPa`);
+
+    // After weather updates, check alerts
+    checkAndSendAlert().catch(console.error);
   }
+
   async function fetchAndApplyWeather(city) {
     const url = `${API_BASE}/api/weather?city=${encodeURIComponent(city)}`;
-    const data = await safeFetch(url); // throws with server message (e.g., invalid API key)
+    const data = await safeFetch(url);
     applyWeatherToUI(data);
   }
 
@@ -144,11 +183,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Main page: “Get weather” (if present on the page)
+  // Main page: “Get weather”
   const fetchWeatherBtn = $('fetchWeatherBtn');
   if (fetchWeatherBtn) {
     fetchWeatherBtn.addEventListener('click', async () => {
-      // Prefer a dedicated #location input; fall back to the modal field if needed
       const city = getVal('location') || getVal('manual_eval_city');
       if (!city) return alert('Please enter a city name.');
       try {
@@ -171,7 +209,6 @@ document.addEventListener('DOMContentLoaded', () => {
     humidity:    { min: 50, max: 80 },
     rainfall:    { min: 50, max: 250 }
   };
-  const normNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
   const statusOf = (key, val) => {
     if (val == null) return { kind:'-', label:'No data', cls:'badge' };
     const r = REC[key]; if (!r) return { kind:'-', label:String(val), cls:'badge' };
@@ -210,10 +247,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Crop grid + Crop Detail Modal
   // ---------------------------------
   const cropGrid = $('cropGrid');
-  const loadCropsBtn = $('loadCropsBtn');
   const cropDetailModal = $('cropDetailModal');
   const closeDetailBtn = $('closeDetailBtn');
-  const detailAddManualBtn = $('detailAddManualBtn');
   const detailTitle = $('detailTitle');
   const detailSnapshot = $('detailSnapshot');
   const detailCurrent = $('detailCurrent');
@@ -247,31 +282,25 @@ document.addEventListener('DOMContentLoaded', () => {
     return sorted[0] || null;
   }
 
-  // --- NEW: Current-season helper (from last planting to next harvest/today) ---
+  // Current-season helper
   function getCurrentSeasonRows(rows) {
     if (!Array.isArray(rows) || !rows.length) return [];
-
     const sorted = [...rows].sort(latestFirst);
 
-    // Most recent planting
     const lastPlanting = sorted.find(r => (r.process_type || '').toLowerCase() === 'planting');
     if (!lastPlanting) {
-      // Fallback: last 90 days (or last 10 rows)
       const ninetyDaysAgo = new Date(Date.now() - 90*24*60*60*1000);
       const byDate = sorted.filter(r => new Date(r.process_date) >= ninetyDaysAgo);
       return byDate.length ? byDate : sorted.slice(0, 10);
     }
 
     const plantingDate = new Date(lastPlanting.process_date);
-
-    // First harvest after that planting
     const nextHarvest = sorted.find(r => {
       const t = (r.process_type || '').toLowerCase();
       return t === 'harvest' && new Date(r.process_date) >= plantingDate;
     });
     const endDate = nextHarvest ? new Date(nextHarvest.process_date) : new Date();
 
-    // Keep rows within [plantingDate, endDate]
     return sorted.filter(r => {
       const d = new Date(r.process_date);
       return d >= plantingDate && d <= endDate;
@@ -320,17 +349,14 @@ document.addEventListener('DOMContentLoaded', () => {
       detailTitle.textContent = `Details • ${crop.charAt(0).toUpperCase() + crop.slice(1)}`;
     }
 
-    // NEW: use only current season rows in the popup
     const seasonRows = getCurrentSeasonRows(rows);
 
-    // Snapshot (status based on latest season readings)
     if (detailSnapshot) {
       const latest = pickLatestReading(seasonRows) || {};
       const hi = summarizeConditions(latest);
       detailSnapshot.innerHTML = `<strong>Status (this season):</strong> <span class="${hi.cls}">${hi.label}</span>`;
     }
 
-    // Current (latest) process in this season
     if (detailCurrent) {
       const sorted = [...seasonRows].sort(latestFirst);
       const cur = sorted[0];
@@ -350,7 +376,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Season history table
     if (detailTbody) {
       const html = seasonRows.sort(latestFirst).map(r => `
         <tr>
@@ -365,13 +390,11 @@ document.addEventListener('DOMContentLoaded', () => {
       detailTbody.innerHTML = html || `<tr><td colspan="11">No records for the current season.</td></tr>`;
     }
 
-    // Show the modal
     if (cropDetailModal) {
       cropDetailModal.style.display = 'flex';
       cropDetailModal.setAttribute('aria-hidden','false');
     }
 
-    // NEW: "Show Full Processes" → navigate to full page with all history
     const showAllBtn = $('detailShowAllBtn');
     if (showAllBtn) {
       const fid = currentFarmerId || getVal('farmer_id_input');
@@ -525,6 +548,7 @@ document.addEventListener('DOMContentLoaded', () => {
         alert('Process saved.');
         closeManualModal();
         refreshAfterSave();
+        checkAndSendAlert().catch(console.error); // check alerts after save
       } catch (err) {
         alert(`Save failed: ${err.message}`);
       }
@@ -590,6 +614,9 @@ document.addEventListener('DOMContentLoaded', () => {
         alert('Evaluation saved.');
         closeManualModal();
         refreshAfterSave();
+
+        // Check alerts after successful evaluate & save
+        checkAndSendAlert().catch(console.error);
       } catch (err) {
         alert(`Evaluation failed: ${err.message}`);
       }
@@ -620,7 +647,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ---------------------------------
-  // Chat + Image upload (used on other pages)
+  // Chat + Image upload
   // ---------------------------------
   const sendBtn = $('sendBtn');
   if (sendBtn) {
@@ -629,35 +656,55 @@ document.addEventListener('DOMContentLoaded', () => {
       const msg = input?.value?.trim();
       const chatBody = $('chatbox-body');
       if (!msg || !chatBody) return;
+
       const userP = document.createElement('p');
       userP.classList.add('user-msg');
       userP.textContent = msg;
       chatBody.appendChild(userP);
       input.value = '';
+
       try {
-        const data = await safeFetch(`${API_BASE}/api/chat`, {
+        // Try disease diagnosis first
+        const diag = await safeFetch(`${API_BASE}/api/diagnose-symptoms`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ symptoms: msg })
         });
+
         const botP = document.createElement('p');
         botP.classList.add('bot-msg');
-        if (data?.disease) {
-          botP.textContent = `Disease: ${data.disease}\nRemedies: ${Array.isArray(data.remedies) ? data.remedies.join(', ') : ''}`;
-        } else {
+        if (diag?.disease) {
+          botP.textContent = `Disease: ${diag.disease}\nRemedies: ${Array.isArray(diag.remedies) ? diag.remedies.join(', ') : ''}`;
+          chatBody.appendChild(botP);
+          return;
+        }
+
+        // Fallback to general AI chat
+        const ai = await safeFetch(`${API_BASE}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg })
+        });
+        botP.textContent = ai?.reply || 'AI could not generate a response.';
+        chatBody.appendChild(botP);
+      } catch (err) {
+        // If diagnosis failed, attempt general AI chat once before showing an error
+        try {
           const ai = await safeFetch(`${API_BASE}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: msg })
           });
+          const botP = document.createElement('p');
+          botP.classList.add('bot-msg');
           botP.textContent = ai?.reply || 'AI could not generate a response.';
+          chatBody.appendChild(botP);
+        } catch (err2) {
+          const botP = document.createElement('p');
+          botP.classList.add('bot-msg');
+          botP.textContent = `Error: ${err2.message}`;
+          chatBody.appendChild(botP);
         }
-        chatBody.appendChild(botP);
-      } catch (err) {
-        const botP = document.createElement('p');
-        botP.classList.add('bot-msg');
-        botP.textContent = `Error: ${err.message}`;
-        chatBody.appendChild(botP);
       }
     });
   }
@@ -669,6 +716,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const file = input?.files?.[0];
       const chatBody = $('chatbox-body');
       if (!file || !chatBody) return alert('Select an image first.');
+
       const formData = new FormData();
       formData.append('cropImage', file);
       try {
