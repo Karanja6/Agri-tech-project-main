@@ -1,38 +1,33 @@
-// server.js
+// server.js - Updated
 require('dotenv').config();
 
-const express   = require('express');
-const bcrypt    = require('bcryptjs');
+const express = require('express');
+const bcrypt = require('bcryptjs');
 const Sequelize = require('sequelize');
 const { DataTypes } = require('sequelize');
-const cors      = require('cors');
-const session   = require('express-session');
-const path      = require('path'); // must be before multer uses it
-const multer    = require('multer');
-const upload    = multer({ dest: path.join(__dirname, 'uploads') });
-const axios     = require('axios');
+const cors = require('cors');
+const session = require('express-session');
+const path = require('path');
+const multer = require('multer');
+const upload = multer({ dest: path.join(__dirname, 'uploads') });
+const axios = require('axios');
 const { spawn } = require('child_process');
 
 const PORT = process.env.PORT || 3000;
-const app  = express();
+const app = express();
 
 /* =========================
    USSD + API helper config
    ========================= */
-const rawBase  = process.env.API_BASE || `http://localhost:${PORT}`;
+const rawBase = process.env.API_BASE || `http://localhost:${PORT}`;
 const API_BASE = rawBase.endsWith('/') ? rawBase.slice(0, -1) : rawBase;
 
-app.set('trust proxy', 1); // Render / proxies
+app.set('trust proxy', 1);
 
-// JSON for normal APIs
 app.use(express.json());
 
-// x-www-form-urlencoded ONLY for the USSD route (most gateways post like this)
 app.use('/ussd', express.urlencoded({ extended: false }));
 
-// ------------ CORS ------------
-// If frontend is same-origin (served by this server on Render), CORS won’t be used.
-// If you host UI elsewhere, add that origin here and keep credentials:true.
 app.use(cors({
   origin: [
     'http://localhost:3000',
@@ -42,17 +37,15 @@ app.use(cors({
   credentials: true
 }));
 
-// Static files (optional site)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Sessions (used by web login; USSD doesn’t need cookies)
 app.use(session({
   secret: process.env.SESSION_SECRET || 'randomsetofcharacters',
   resave: false,
   saveUninitialized: true,
   cookie: {
-    secure: process.env.NODE_ENV === 'production',                   // true on HTTPS
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax' // allow cross-site in prod
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
   }
 }));
 
@@ -117,48 +110,46 @@ let User, CropProcess, Feedback;
 function defineModels(sequelize) {
   const User = sequelize.define('User', {
     farmers_id: { type: DataTypes.INTEGER, primaryKey: true, allowNull: false, unique: true },
-    fullname:   { type: DataTypes.STRING,  allowNull: false },
-    contact:    { type: DataTypes.STRING,  allowNull: false }, // keep as string for leading zeros/+ and country codes
-    land_size:  { type: DataTypes.FLOAT,   allowNull: false },
-    soil_type:  { type: DataTypes.STRING,  allowNull: false },
-    password:   { type: DataTypes.STRING,  allowNull: false },
+    fullname: { type: DataTypes.STRING, allowNull: false },
+    contact: { type: DataTypes.STRING, allowNull: false },
+    land_size: { type: DataTypes.FLOAT, allowNull: false },
+    soil_type: { type: DataTypes.STRING, allowNull: false },
+    password: { type: DataTypes.STRING, allowNull: false },
   }, { timestamps: true });
 
   const CropProcess = sequelize.define('CropProcess', {
-    process_id:   { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true, allowNull: false },
-    farmers_id:   { type: DataTypes.INTEGER, allowNull: false, references: { model: 'Users', key: 'farmers_id' } },
-    crop:         { type: DataTypes.STRING,  allowNull: false },
-    process_type: { type: DataTypes.STRING,  allowNull: false }, // e.g. planting/harvest/etc.
-    process_date: { type: DataTypes.DATE,    allowNull: false },
+    process_id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true, allowNull: false },
+    farmers_id: { type: DataTypes.INTEGER, allowNull: false, references: { model: 'Users', key: 'farmers_id' } },
+    crop: { type: DataTypes.STRING, allowNull: false },
+    process_type: { type: DataTypes.STRING, allowNull: false },
+    process_date: { type: DataTypes.DATE, allowNull: false },
 
-    // Optional readings
-    N:           { type: DataTypes.FLOAT, allowNull: true },
-    P:           { type: DataTypes.FLOAT, allowNull: true },
-    K:           { type: DataTypes.FLOAT, allowNull: true },
+    N: { type: DataTypes.FLOAT, allowNull: true },
+    P: { type: DataTypes.FLOAT, allowNull: true },
+    K: { type: DataTypes.FLOAT, allowNull: true },
     temperature: { type: DataTypes.FLOAT, allowNull: true },
-    humidity:    { type: DataTypes.FLOAT, allowNull: true },
-    ph:          { type: DataTypes.FLOAT, allowNull: true },
-    rainfall:    { type: DataTypes.FLOAT, allowNull: true },
+    humidity: { type: DataTypes.FLOAT, allowNull: true },
+    ph: { type: DataTypes.FLOAT, allowNull: true },
+    rainfall: { type: DataTypes.FLOAT, allowNull: true },
 
-    // ML outputs
-    stage:             { type: DataTypes.STRING,  allowNull: true },
-    suitable:          { type: DataTypes.BOOLEAN, allowNull: true },
-    suitability_score: { type: DataTypes.FLOAT,   allowNull: true },
-    flags:             { type: DataTypes.JSON,    allowNull: true },
-    advice:            { type: DataTypes.TEXT,    allowNull: true },
+    stage: { type: DataTypes.STRING, allowNull: true },
+    suitable: { type: DataTypes.BOOLEAN, allowNull: true },
+    suitability_score: { type: DataTypes.FLOAT, allowNull: true },
+    flags: { type: DataTypes.JSON, allowNull: true },
+    advice: { type: DataTypes.TEXT, allowNull: true },
   });
 
   const Feedback = sequelize.define('Feedback', {
-    id:         { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     farmers_id: { type: DataTypes.INTEGER, allowNull: false, references: { model: 'Users', key: 'farmers_id' } },
-    date:       { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.NOW },
-    status:     { type: DataTypes.BOOLEAN, allowNull: false },
+    date: { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.NOW },
+    status: { type: DataTypes.BOOLEAN, allowNull: false },
   });
 
   User.hasMany(CropProcess, { foreignKey: 'farmers_id' });
-  User.hasMany(Feedback,    { foreignKey: 'farmers_id' });
+  User.hasMany(Feedback, { foreignKey: 'farmers_id' });
   CropProcess.belongsTo(User, { foreignKey: 'farmers_id' });
-  Feedback.belongsTo(User,    { foreignKey: 'farmers_id' });
+  Feedback.belongsTo(User, { foreignKey: 'farmers_id' });
 
   return { User, CropProcess, Feedback };
 }
@@ -174,7 +165,6 @@ async function initializeDatabase() {
         port: process.env.DB_PORT || 5432,
         dialect: process.env.DB_DIALECT || 'postgres',
         logging: false,
-        // Render Postgres typically requires SSL
         dialectOptions: (process.env.NODE_ENV === 'production' || process.env.DB_SSL === 'true')
           ? { ssl: { require: true, rejectUnauthorized: false } }
           : {}
@@ -194,7 +184,6 @@ async function initializeDatabase() {
 }
 initializeDatabase();
 
-// Guard so routes fail clearly if DB isn’t ready
 function ensureDBReady(res) {
   if (!User || !CropProcess || !Feedback) {
     res.status(503).json({ message: 'Database not initialized yet. Please try again shortly.' });
@@ -207,7 +196,6 @@ function ensureDBReady(res) {
    Routes
    ====== */
 
-// Simple health check for your USSD provider to ping
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 app.get('/', (req, res) => {
@@ -218,6 +206,10 @@ app.get('/', (req, res) => {
 app.get('/home', (req, res) => {
   if (!req.session.farmers_id) return res.redirect('/');
   res.sendFile(path.join(__dirname, 'public', 'home.html'));
+});
+
+app.get('/forecast', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'forecast.html'));
 });
 
 app.post('/api/register', async (req, res) => {
@@ -267,7 +259,6 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// === Stage-aware process evaluation ===
 app.post('/api/process-eval', async (req, res) => {
   const { crop, stage, N, P, K, temperature, humidity, ph, rainfall } = req.body || {};
   const required = [crop, stage, N, P, K, temperature, humidity, ph, rainfall];
@@ -275,9 +266,9 @@ app.post('/api/process-eval', async (req, res) => {
     return res.status(400).json({ message: 'Missing fields. Require: crop, stage, N,P,K,temperature,humidity,ph,rainfall' });
   }
 
-  const pyCmd  = process.platform === 'win32' ? 'python' : 'python3';
+  const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
   const pyPath = path.join(__dirname, 'ml', 'process_predict.py');
-  const args   = [String(crop), String(stage), ...[N, P, K, temperature, humidity, ph, rainfall].map(String)];
+  const args = [String(crop), String(stage), ...[N, P, K, temperature, humidity, ph, rainfall].map(String)];
 
   const py = spawn(pyCmd, [pyPath, ...args], { cwd: path.join(__dirname, 'ml') });
 
@@ -325,7 +316,6 @@ app.get('/api/get-processes', async (req, res) => {
   }
 });
 
-// AI chat endpoints
 app.post('/api/chat', async (req, res) => {
   const { message } = req.body;
   if (!message) return res.status(400).json({ error: 'Message is required' });
@@ -377,27 +367,42 @@ Format: {"disease": "...", "remedies": ["..."]}`;
   }
 });
 
-// GET /api/weather?city=Nairobi
-app.get('/api/weather', async (req, res) => {
-  const city = (req.query.city || '').trim();
-  if (!city) return res.status(400).json({ message: 'city is required' });
+// app.use(express.static(path.join(__dirname, "public")));
 
-  try {
-    const url = 'https://api.openweathermap.org/data/2.5/weather';
-    const { data } = await axios.get(url, {
-      params: { q: city, appid: process.env.OPENWEATHER_KEY, units: 'metric' }
-    });
+app.get("/api/weather", (req, res) => {
+  const city = (req.query.city || "").trim();
+  if (!city) return res.status(400).json({ message: "city is required" });
 
-    // Return only what the frontend needs
-    return res.json({ main: data.main, wind: data.wind, clouds: data.clouds });
-  } catch (e) {
-    const status  = e?.response?.status || 500;
-    const message = e?.response?.data?.message || 'weather fetch failed';
-    return res.status(status).json({ message });
-  }
+  const scriptPath = path.join(__dirname, "ml", "warning_system.py");
+  const py = spawn("python", [scriptPath, city]);
+
+  let dataBuffer = "";
+  py.stdout.on("data", (data) => {
+    dataBuffer += data.toString();
+  });
+
+  py.stderr.on("data", (data) => {
+    console.error(`Python error: ${data}`);
+  });
+
+  py.on("close", (code) => {
+    if (code !== 0) {
+      return res.status(500).json({ message: "Python script failed" });
+    }
+    try {
+      const forecast = JSON.parse(dataBuffer);
+      res.json(forecast); // send daily forecast back to frontend
+    } catch (err) {
+      console.error("Parse error:", err);
+      res.status(500).json({ message: "Failed to parse forecast" });
+    }
+  });
 });
+// app.use(express.static(path.join(__dirname, "public")));
+// app.get("/", (req, res) => {
+//   res.sendFile(path.join(__dirname, "public", "index.html"));
+// });
 
-// === ML recommend endpoint ===
 app.post('/api/ml-recommend', async (req, res) => {
   const { N, P, K, temperature, humidity, ph, rainfall } = req.body || {};
   const nums = [N, P, K, temperature, humidity, ph, rainfall];
@@ -405,9 +410,9 @@ app.post('/api/ml-recommend', async (req, res) => {
     return res.status(400).json({ message: 'All numeric fields required: N,P,K,temperature,humidity,ph,rainfall' });
   }
 
-  const pyCmd  = process.platform === 'win32' ? 'python' : 'python3';
+  const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
   const pyPath = path.join(__dirname, 'ml', 'predict.py');
-  const args   = nums.map(String);
+  const args = nums.map(String);
 
   const py = spawn(pyCmd, [pyPath, ...args], { cwd: path.join(__dirname, 'ml') });
 
@@ -417,21 +422,220 @@ app.post('/api/ml-recommend', async (req, res) => {
 
   py.on('close', code => {
     if (code !== 0) return res.status(500).json({ message: 'ML service error', error: err || out });
-    try { res.json(JSON.parse(out.trim())); }
+    try {
+      const mlResult = JSON.parse(out.trim());
+      mlResult.aiRecommendationAvailable = true;
+      res.json(mlResult);
+    }
     catch { res.status(500).json({ message: 'Bad ML output', raw: out }); }
   });
 });
 
-// === Simple process save (no ML) ===
-// === Simple process save (now supports readings + ML fields) ===
+const AIService = require('./services/aiService');
+let globalAIService = null;
+
+async function initializeAIService() {
+  try {
+    globalAIService = new AIService();
+    await globalAIService.initialize();
+  } catch (error) {
+    console.error('❌ AI Service initialization failed:', error.message);
+    globalAIService = null;
+  }
+}
+initializeAIService();
+
+// === AI Crop Recommendation endpoint (Updated) ===
+app.post('/api/ai-crop-recommendation', async (req, res) => {
+  try {
+    // Extract parameters from request body
+    const { N, P, K, ph, rainfall, temperature, humidity } = req.body || {};
+
+    // Validate essential numeric inputs
+    const requiredNums = [N, P, rainfall];
+    if (requiredNums.some(v => v === undefined || v === null || Number.isNaN(Number(v)))) {
+      console.error('Validation Error: Missing or invalid required parameters N, P, or rainfall.');
+      return res.status(400).json({
+        success: false,
+        message: 'Missing or invalid required parameters: N (nitrogen), P (phosphorus), and rainfall are required as numbers.'
+      });
+    }
+
+    // Build inputData for ML model and Python script, applying defaults if values are missing
+    const inputData = {
+      nitrogen: Number(N),
+      phosphorus: Number(P),
+      potassium: K !== undefined && !Number.isNaN(Number(K)) ? Number(K) : 40, // Default K
+      ph: ph !== undefined && !Number.isNaN(Number(ph)) ? Number(ph) : 6.5,     // Default pH
+      temperature: temperature !== undefined && !Number.isNaN(Number(temperature)) ? Number(temperature) : 25, // Default Temperature
+      humidity: humidity !== undefined && !Number.isNaN(Number(humidity)) ? Number(humidity) : 60,     // Default Humidity
+      rainfall: Number(rainfall)
+    };
+    console.log('Input data for ML and AI:', inputData);
+
+    // 1. Get ML recommendation first
+    const mlRec = await new Promise((resolve, reject) => {
+      // Prepare arguments for the ML script (predict.py)
+      const mlScriptArgs = [
+        inputData.nitrogen,
+        inputData.phosphorus,
+        inputData.potassium,
+        inputData.temperature,
+        inputData.humidity,
+        inputData.ph,
+        inputData.rainfall
+      ].map(String); // All args must be strings for Python spawn
+      console.log('ML script arguments:', mlScriptArgs);
+
+      const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
+      const pyPath = path.join(__dirname, 'ml', 'predict.py');
+      const py = spawn(pyCmd, [pyPath, ...mlScriptArgs], { cwd: path.join(__dirname, 'ml') });
+
+      let stdout = '', stderr = '';
+      py.stdout.on('data', d => stdout += d.toString());
+      py.stderr.on('data', d => stderr += d.toString());
+
+      py.on('close', code => {
+        if (code !== 0) {
+          // If ML script exits with an error, reject the promise
+          const errorMsg = `ML service error (code ${code}): ${stderr || stdout}`;
+          console.error('ML Script Error:', errorMsg);
+          reject(new Error(errorMsg));
+        } else {
+          try {
+            // Parse the JSON output from the ML script
+            const parsedOutput = JSON.parse(stdout.trim());
+            console.log('ML Script Success Output:', parsedOutput);
+            resolve(parsedOutput);
+          } catch (e) {
+            const errorMsg = `Bad ML output JSON: ${stdout.trim()} - ${e.message}`;
+            console.error('ML JSON Parsing Error:', errorMsg);
+            reject(new Error(errorMsg));
+          }
+        }
+      });
+    });
+
+    // Extract the predicted crop from the ML recommendation
+    const predictedCrop = mlRec.prediction;
+    if (!predictedCrop) {
+      console.error('ML Prediction Error: No crop predicted by ML model.');
+      return res.status(500).json({ success: false, message: 'ML model did not return a predicted crop.' });
+    }
+    console.log('ML Predicted Crop:', predictedCrop);
+
+    // 2. Call gemini.py for AI care guide, passing the predicted crop and farming data
+    const aiRec = await new Promise((resolve, reject) => {
+      const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
+      const pyPath = path.join(__dirname, 'ml', 'gemini.py');
+
+      // Prepare input for the gemini.py script, including the predicted crop
+      const inputForPython = {
+        ...inputData, // Pass all farming data
+        crop: predictedCrop // Add the ML-predicted crop
+      };
+      console.log('Input data for Gemini script:', inputForPython);
+
+      // Pass the entire inputForPython object as a JSON string argument to the Python script
+      const args = [JSON.stringify(inputForPython)];
+      const py = spawn(pyCmd, [pyPath, ...args], { cwd: path.join(__dirname, 'ml') });
+
+      let stdout = '', stderr = '';
+      py.stdout.on('data', d => stdout += d.toString());
+      py.stderr.on('data', d => stderr += d.toString());
+
+      py.on('close', code => {
+        if (code !== 0) {
+          // If Gemini script exits with an error, reject the promise
+          const errorMsg = `Gemini AI error (code ${code}): ${stderr || stdout}`;
+          console.error('Gemini Script Error:', errorMsg);
+          reject(new Error(errorMsg));
+        } else {
+          try {
+            // Parse the JSON output from the Gemini script
+            const parsedOutput = JSON.parse(stdout.trim());
+            console.log('Gemini Script Success Output:', parsedOutput);
+            resolve(parsedOutput);
+          } catch (e) {
+            const errorMsg = `Bad Gemini output JSON: ${stdout.trim()} - ${e.message}`;
+            console.error('Gemini JSON Parsing Error:', errorMsg);
+            reject(new Error(errorMsg));
+          }
+        }
+      });
+    });
+
+    // 3. Combine results and send to frontend
+    res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      mlRecommendation: mlRec,
+      aiRecommendation: aiRec // aiRec now directly contains the structured care guide
+    });
+    console.log('AI Crop Recommendation successful. Response sent.');
+
+  } catch (error) {
+    console.error('AI Crop Recommendation Endpoint Catch Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error while generating recommendations',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+
+
+function generateComparisonInsights(mlRec, aiRec) {
+  const insights = {
+    agreement: false,
+    differences: [],
+    summary: ''
+  };
+
+  try {
+    const mlCrop = mlRec.prediction || mlRec.recommended_crop || '';
+    const aiCrop = aiRec.primaryCrop || '';
+
+    if (mlCrop.toLowerCase().includes(aiCrop.toLowerCase()) ||
+      aiCrop.toLowerCase().includes(mlCrop.toLowerCase())) {
+      insights.agreement = true;
+      insights.summary = `Both ML and AI models agree on recommending ${aiCrop || mlCrop}`;
+    } else {
+      insights.agreement = false;
+      insights.summary = `ML recommends ${mlCrop}, while AI recommends ${aiCrop}`;
+      insights.differences.push(`Different primary crop recommendations: ML suggests ${mlCrop}, AI suggests ${aiCrop}`);
+    }
+
+    if (!insights.agreement && aiRec.alternativeCrops) {
+      const mlInAlternatives = aiRec.alternativeCrops.some(alt =>
+        alt.toLowerCase().includes(mlCrop.toLowerCase()) ||
+        mlCrop.toLowerCase().includes(alt.toLowerCase())
+      );
+
+      if (mlInAlternatives) {
+        insights.differences.push(`ML recommendation (${mlCrop}) appears in AI alternative suggestions`);
+      }
+    }
+
+    return insights;
+  } catch (error) {
+    console.error('Error generating comparison insights:', error);
+    return {
+      agreement: false,
+      differences: ['Could not compare recommendations due to formatting differences'],
+      summary: 'Both recommendations available but comparison failed'
+    };
+  }
+}
+
 app.post('/api/Evaluation', async (req, res) => {
   if (!ensureDBReady(res)) return;
   try {
     const {
       farmers_id, crop, process_type, process_date,
-      // optional readings
       N, P, K, temperature, humidity, ph, rainfall,
-      // optional ML outputs
       stage, suitable, suitability_score, flags, advice
     } = req.body || {};
 
@@ -441,9 +645,7 @@ app.post('/api/Evaluation', async (req, res) => {
 
     const saved = await CropProcess.create({
       farmers_id, crop, process_type, process_date,
-      // readings (nullable)
       N, P, K, temperature, humidity, ph, rainfall,
-      // ML outputs (nullable)
       stage, suitable, suitability_score,
       flags, advice
     });
@@ -454,20 +656,25 @@ app.post('/api/Evaluation', async (req, res) => {
     return res.status(500).json({ message: 'Error saving process' });
   }
 });
-/* =========================
-   Image upload (disease detection)
-   ========================= */
-// POST /api/upload-image  (multipart/form-data; field name: cropImage)
+
 app.post('/api/upload-image', upload.single('cropImage'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: 'No image uploaded (field: cropImage)' });
 
     const imgPath = req.file.path;
 
-    // --- OPTIONAL: Call your Python model instead ---
-    const pyCmd  = process.platform === 'win32' ? 'python' : 'python3';
-    const pyPath = path.join(__dirname, 'ml', 'detect_disease.py'); // implement this script
-    const py     = spawn(pyCmd, [pyPath, imgPath], { cwd: path.join(__dirname, 'ml') });
+    const pyPath = path.join(__dirname, 'ml', 'detect_disease.py');
+    const fs = require('fs');
+
+    if (!fs.existsSync(pyPath)) {
+      return res.json({
+        disease: 'Disease detection not available',
+        remedies: ['Please consult with an agricultural expert for disease diagnosis']
+      });
+    }
+
+    const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
+    const py = spawn(pyCmd, [pyPath, imgPath], { cwd: path.join(__dirname, 'ml') });
 
     let out = '', err = '';
     py.stdout.on('data', d => out += d.toString());
@@ -475,7 +682,7 @@ app.post('/api/upload-image', upload.single('cropImage'), async (req, res) => {
     py.on('close', code => {
       if (code !== 0) return res.status(500).json({ message: 'Image ML error', error: err || out });
       try {
-        const parsed = JSON.parse(out.trim()); // expect {"disease":"..","remedies":["..",".."]}
+        const parsed = JSON.parse(out.trim());
         if (!parsed?.disease || !Array.isArray(parsed?.remedies)) {
           return res.status(500).json({ message: 'Bad ML output shape', raw: parsed });
         }
@@ -490,11 +697,7 @@ app.post('/api/upload-image', upload.single('cropImage'), async (req, res) => {
   }
 });
 
-/* ======================
-   USSD (GET for testing, POST for provider)
-   ====================== */
 app.all('/ussd', async (req, res) => {
-  // Helpful debug (remove or reduce in production)
   console.log('[USSD HIT]', {
     method: req.method,
     body: req.body,
@@ -503,24 +706,23 @@ app.all('/ussd', async (req, res) => {
   });
 
   const isGet = req.method === 'GET';
-  const sessionId   = isGet ? req.query.sessionId   : req.body.sessionId;
+  const sessionId = isGet ? req.query.sessionId : req.body.sessionId;
   const phoneNumber = isGet ? req.query.phoneNumber : req.body.phoneNumber;
   const serviceCode = isGet ? req.query.serviceCode : req.body.serviceCode;
-  const textRaw     = isGet ? req.query.text        : req.body.text;
+  const textRaw = isGet ? req.query.text : req.body.text;
 
-  const text  = (textRaw || '').toString();
+  const text = (textRaw || '').toString();
   const parts = text.split('*').filter(Boolean);
   const first = parts[0];
 
   if (!parts.length) return ussdReply(res, 'CON', rootUssdMenu());
 
   try {
-    // 1) Login -> 1*FARMER_ID*PASSWORD
     if (first === '1') {
       if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
       if (parts.length === 2) return ussdReply(res, 'CON', 'Enter Password:');
       const farmers_id = parts[1];
-      const password   = parts[2];
+      const password = parts[2];
       try {
         await apiPost('/api/login', { farmers_id, password });
         return ussdReply(res, 'END', 'Login successful.');
@@ -529,7 +731,6 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // 2) Register -> 2*FARMER_ID*FULL_NAME*CONTACT*LAND_SIZE*SOIL*PASSWORD
     if (first === '2') {
       const prompts = [
         'Enter Farmer ID:',
@@ -551,7 +752,6 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // 3) Weather + ML → 3*CITY*TEMP*HUMID*N*P*K*pH*RAINFALL
     if (first === '3') {
       const prompts = [
         'Enter City/Town:',
@@ -568,11 +768,11 @@ app.all('/ussd', async (req, res) => {
       const [_, city, temperature, humidity, N, P, K, ph, rainfall] = parts;
       try {
         const ml = await apiPost('/api/ml-recommend', {
-          N:+N, P:+P, K:+K, ph:+ph, rainfall:+rainfall,
-          temperature:+temperature, humidity:+humidity
+          N: +N, P: +P, K: +K, ph: +ph, rainfall: +rainfall,
+          temperature: +temperature, humidity: +humidity
         });
         const list = Array.isArray(ml.alternatives) && ml.alternatives.length
-          ? `\nAlternatives: ${ml.alternatives.slice(0,5).join(', ')}`
+          ? `\nAlternatives: ${ml.alternatives.slice(0, 5).join(', ')}`
           : '';
         return ussdReply(res, 'END', `${ml.message || 'Recommendation ready.'}${list}`);
       } catch (e) {
@@ -580,7 +780,6 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // 4) Record Crop Process -> 4*FARMER_ID*CROP*PROCESS_TYPE*DATE
     if (first === '4') {
       const prompts = [
         'Enter Farmer ID:',
@@ -599,7 +798,6 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // 5) View My Processes -> 5*FARMER_ID
     if (first === '5') {
       if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
       const farmers_id = parts[1];
@@ -614,7 +812,6 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // 6) Quick Disease Advice -> 6*symptoms text...
     if (first === '6') {
       if (parts.length === 1) return ussdReply(res, 'CON', 'Describe crop symptoms (short):');
       const symptoms = parts.slice(1).join(' ');
@@ -627,7 +824,6 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // 7) Feedback -> 7*FARMER_ID*your feedback (we store boolean only)
     if (first === '7') {
       if (parts.length === 1) return ussdReply(res, 'CON', 'Enter Farmer ID:');
       if (parts.length === 2) return ussdReply(res, 'CON', 'Share your feedback (short):');
@@ -640,7 +836,6 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // 8) Expert Profiles (static)
     if (first === '8') {
       const experts = [
         'Agro Hotline: 0700 000 000',
@@ -650,7 +845,6 @@ app.all('/ussd', async (req, res) => {
       return ussdReply(res, 'END', experts);
     }
 
-    // 9) Process Suitability Check -> 9*CROP*PROCESS_TYPE*N*P*K*TEMP*HUMID*PH*RAINFALL
     if (first === '9') {
       const prompts = [
         'Crop (e.g., maize):',
@@ -682,17 +876,17 @@ app.all('/ussd', async (req, res) => {
         const data = await apiPost('/api/process-eval', {
           crop: String(crop).toLowerCase(),
           stage,
-          N:+N, P:+P, K:+K,
-          temperature:+temperature,
-          humidity:+humidity,
-          ph:+ph,
-          rainfall:+rainfall
+          N: +N, P: +P, K: +K,
+          temperature: +temperature,
+          humidity: +humidity,
+          ph: +ph,
+          rainfall: +rainfall
         });
         const status = (data.prediction === 'suitable') ? 'Suitable' : 'Not suitable';
         const pct = Math.round((data.suitability_score || 0) * 100);
         let msg = `${status}. Score: ${pct}%`;
         const flags = data.flags || {};
-        const issues = Object.entries(flags).filter(([,v]) => v !== 'ok');
+        const issues = Object.entries(flags).filter(([, v]) => v !== 'ok');
         if (issues.length) {
           msg += '\nIssues:';
           issues.slice(0, 3).forEach(([k, v]) => { msg += `\n- ${k}: ${v}`; });
@@ -703,7 +897,6 @@ app.all('/ussd', async (req, res) => {
       }
     }
 
-    // Fallback to root menu
     return ussdReply(res, 'CON', rootUssdMenu());
   } catch (err) {
     console.error('USSD error:', err);
@@ -711,9 +904,6 @@ app.all('/ussd', async (req, res) => {
   }
 });
 
-/* =========
-   Listener
-   ========= */
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`API_BASE: ${API_BASE}`);

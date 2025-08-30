@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>16-Day Weather Forecast</title>
+  <script src="https://code.highcharts.com/highcharts.js"></script>
+</head>
+<body>
+  <h2>Weather Forecast</h2>
+
+  <!-- City input -->
+  <input type="text" id="cityInput" placeholder="Enter a city" />
+  <button id="fetchWeatherBtn">Get Forecast</button>
+
+  <!-- Status message -->
+  <div id="weather-info" style="margin-top:10px; color:blue;"></div>
+
+  <!-- Chart containers -->
+  <div id="tempChart" style="width:80%; height:400px; margin-top:20px; display:none;"></div>
+  <div id="rainChart" style="width:80%; height:400px; margin-top:20px; display:none;"></div>
+
+  <script>
+    async function loadForecast() {
+      const cityInput = document.getElementById("cityInput");
+      const city = cityInput.value.trim();
+      const weatherInfo = document.getElementById("weather-info");
+      const tempChartDiv = document.getElementById("tempChart");
+      const rainChartDiv = document.getElementById("rainChart");
+
+      if (!city) {
+        weatherInfo.textContent = "Please enter a city name";
+        return;
+      }
+
+      weatherInfo.textContent = "Fetching weather forecast...";
+      tempChartDiv.style.display = "none";
+      rainChartDiv.style.display = "none";
+
+      try {
+        const res = await fetch(`/api/weather?city=${encodeURIComponent(city)}`);
+        if (!res.ok) {
+          weatherInfo.textContent = `Error: ${res.status} ${res.statusText}`;
+          return;
+        }
+        const data = await res.json();
+
+        if (!data || data.error) {
+          weatherInfo.textContent = `Error: ${data && data.error ? data.error : "Invalid response from server"}`;
+          return;
+        }
+
+        const { time: dates, temperature_2m_max: maxTemps, temperature_2m_min: minTemps, precipitation_sum: rain } = data;
+
+        if (!dates || !maxTemps || !minTemps || !rain) {
+          weatherInfo.textContent = "Incomplete forecast data received.";
+          return;
+        }
+
+        weatherInfo.textContent = "";
+        tempChartDiv.style.display = "block";
+        rainChartDiv.style.display = "block";
+
+        Highcharts.chart("tempChart", {
+          chart: { type: "line" },
+          title: { text: `16-Day Temperature Forecast for ${city}` },
+          xAxis: { categories: dates },
+          yAxis: { title: { text: "Temperature (°C)" } },
+          series: [
+            { name: "Max Temp", data: maxTemps },
+            { name: "Min Temp", data: minTemps }
+          ]
+        });
+
+        Highcharts.chart("rainChart", {
+          chart: { type: "column" },
+          title: { text: `16-Day Precipitation Forecast for ${city}` },
+          xAxis: { categories: dates },
+          yAxis: { title: { text: "Rainfall (mm)" } },
+          series: [{ name: "Precipitation", data: rain }]
+        });
+
+      } catch (err) {
+        console.error(err);
+        weatherInfo.textContent = "Failed to fetch forecast";
+      }
+    }
+
+    // Attach event listener after DOM is ready
+    document.addEventListener("DOMContentLoaded", () => {
+      const btn = document.getElementById("fetchWeatherBtn");
+      btn.addEventListener("click", loadForecast);
+    });
+  </script>
+</body>
+</html>

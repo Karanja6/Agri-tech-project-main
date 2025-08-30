@@ -5,10 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Weather & Crop Recommendation</title>
   <link rel="stylesheet" href="/stylesheet.css" />
+  <script src="https://code.highcharts.com/highcharts.js"></script>
 </head>
 <body>
   <header>
-    <h1>Recommendation</h1>
+    <h1>ImpactAI Agriculture Recommendation</h1>
   </header>
 
   <nav>
@@ -18,25 +19,21 @@
     <a href="/Diseaseandpestmanagement.html">Disease and pest management</a>
     <a href="/advice.html">Advice</a>
     <a href="/market.html">Market</a>
+    <a href="/forecast">16-Day Forecast</a>
   </nav>
 
   <main>
     <!-- Weather lookup -->
-    <section>
-      <div class="form-container">
-        <label for="location">Enter Location:</label>
-        <input type="text" id="location" placeholder="Enter city name" />
-        <button id="fetchWeatherBtn">Get Weather</button>
-        <p id="weather-info">Please enter a location above to get weather information.</p>
-      </div>
-
-      <div class="weather-container">
-        <h2>Current Weather</h2>
-        <div id="temperature"></div>
-        <div id="wind"></div>
-        <div id="clouds"></div>
-        <div id="pressure"></div>
-      </div>
+   <section>
+            <div class="form-container">
+                <label for="location">Enter Location:</label>
+                <input type="text" id="location" placeholder="Enter city name" />
+                <button id="fetchWeatherBtn">Get Prediction</button>
+                <p id="weather-info">Please enter a location above to get weather information.</p>
+            </div>
+            
+            <div id="tempChart" style="width:80%; height:400px; margin-top:20px;"></div>
+            <div id="rainChart" style="width:80%; height:400px; margin-top:20px;"></div>
     </section>
 
     <!-- ML inputs -->
@@ -47,19 +44,61 @@
       <input id="K" type="number" step="1" placeholder="Potassium (K)" />
       <input id="ph" type="number" step="0.1" placeholder="Soil pH" />
       <input id="rainfall" type="number" step="0.1" placeholder="Rainfall (mm)" />
-      <button id="getRecBtn">Get ML Recommendation</button>
+      <button id="getRecBtn">Get Recommendations</button>
     </section>
 
     <!-- Recommendation (now placed below the inputs) -->
     <section class="recommendation-container" id="recommendationContainer" style="display:none;">
-      <h2>Recommended Crops</h2>
+      <h2>Crop Recommendations</h2>
 
-      <!-- Primary ML message goes here -->
-      <div id="mlResult" class="ml-result" style="margin: 8px 0;"></div>
+      <div class="recommendations-wrapper">
+        <!-- ML Recommendation Section -->
+        <div class="ml-recommendation-section">
+          <h3>ML Model Prediction</h3>
+          <div id="mlResult" class="ml-result"></div>
+          <div id="mlLoading" class="loading-indicator" style="display:none;">
+            <div class="spinner"></div>
+            <span>Processing ML recommendation...</span>
+          </div>
+        </div>
+
+        <!-- AI Recommendation Section -->
+        <div class="ai-recommendation-section">
+          <h3>AI Analysis & Advice</h3>
+          <div id="aiResult" class="ai-result"></div>
+          <div id="aiLoading" class="loading-indicator" style="display:none;">
+            <div class="spinner"></div>
+            <span>Generating AI insights...</span>
+          </div>
+          <div id="aiError" class="ai-error" style="display:none;">
+            <p>AI recommendations unavailable. Using ML prediction only.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Comparison Section -->
+      <div id="comparisonSection" class="comparison-section" style="display:none;">
+        <h3>Recommendation Comparison</h3>
+        <div id="comparisonResult" class="comparison-result"></div>
+      </div>
+
+      <!-- Follow-up Questions Section -->
+      <div id="followUpSection" class="follow-up-section" style="display:none;">
+        <h3>Ask Follow-up Questions</h3>
+        <div class="conversation-interface">
+          <div id="conversationHistory" class="conversation-history"></div>
+          <div class="question-input">
+            <input type="text" id="followUpQuestion" placeholder="Ask about farming advice, timing, soil improvements..." />
+            <button id="askQuestionBtn">Ask AI</button>
+          </div>
+        </div>
+      </div>
 
       <!-- Optional list: shows alternatives or rule-based list if you keep it -->
-      <h3 style="margin-top:12px;">Other Options</h3>
-      <ul id="cropList" class="crop-list"></ul>
+      <div class="other-options" style="margin-top:20px;">
+        <h3>Other Options</h3>
+        <ul id="cropList" class="crop-list"></ul>
+      </div>
     </section>
   </main>
 
@@ -68,5 +107,6 @@
   </footer>
 
   <script defer src="/script.js"></script>
+  
 </body>
 </html>

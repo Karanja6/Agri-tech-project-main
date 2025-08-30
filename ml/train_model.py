@@ -34,7 +34,7 @@ def train(input_csv, output_joblib):
     print("Saved model to:", output_joblib)
 
 if __name__ == "__main__":
-    project_root = Path(__file__).resolve().parents[1]
-    input_csv = project_root / "Crop_recommendation.csv"
+    # CSV is in the same ml directory
+    input_csv = Path(__file__).with_name("Crop_recommendation.csv")
     output_joblib = Path(__file__).with_name("crop_rf_pipeline.joblib")
     train(str(input_csv), str(output_joblib))
