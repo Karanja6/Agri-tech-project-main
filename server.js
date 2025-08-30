@@ -334,37 +334,40 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-app.post('/api/diagnose-symptoms', async (req, res) => {
+app.post("/api/diagnose-symptoms", (req, res) => {
   const { symptoms } = req.body;
-  if (!symptoms) return res.status(400).json({ error: 'Symptoms are required' });
-
-  try {
-    const prompt = `Given the following crop symptoms, provide a JSON object with the likely disease and natural remedies.
-Symptoms: ${symptoms}
-Format: {"disease": "...", "remedies": ["..."]}`;
-
-    const response = await axios.post(
-      'https://api.deepinfra.com/v1/engines/deepseek-ai/DeepSeek-Prover-V2-671B/completions',
-      { prompt, max_tokens: 150, temperature: 0.7 },
-      { headers: { 'Authorization': `Bearer ${process.env.DEEPINFRA_API_KEY}`, 'Content-Type': 'application/json' } }
-    );
-
-    const reply = response.data?.choices?.[0]?.text?.trim();
-    if (!reply) return res.status(500).json({ error: 'Empty response from AI' });
-
-    let parsed;
-    try { parsed = JSON.parse(reply); }
-    catch { return res.status(500).json({ error: 'Invalid JSON format in AI response', raw: reply }); }
-
-    if (!parsed.disease || !Array.isArray(parsed.remedies)) {
-      return res.status(500).json({ error: 'Malformed AI response structure.', raw: reply });
-    }
-
-    res.json(parsed);
-  } catch (error) {
-    console.error('Error from DeepInfra:', error.response?.data || error.message);
-    res.status(500).json({ error: 'Failed to analyze symptoms' });
+  if (!symptoms) {
+    return res.status(400).json({ error: "Symptoms are required" });
   }
+
+  // Path to your Python file
+  const scriptPath = path.join(__dirname, "ml", "diagnosis.py");
+
+  // Pass symptoms as a JSON string to Python
+  const py = spawn("python", [scriptPath, JSON.stringify({ symptoms })]);
+
+  let dataBuffer = "";
+
+  py.stdout.on("data", (data) => {
+    dataBuffer += data.toString();
+  });
+
+  py.stderr.on("data", (data) => {
+    console.error(`Python error: ${data}`);
+  });
+
+  py.on("close", (code) => {
+    if (code !== 0) {
+      return res.status(500).json({ error: "Python script failed" });
+    }
+    try {
+      const result = JSON.parse(dataBuffer);
+      res.json(result); // send AI diagnosis back to frontend
+    } catch (err) {
+      console.error("Parse error:", err);
+      res.status(500).json({ error: "Failed to parse diagnosis" });
+    }
+  });
 });
 
 // app.use(express.static(path.join(__dirname, "public")));
